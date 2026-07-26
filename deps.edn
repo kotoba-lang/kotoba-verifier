@@ -2,13 +2,19 @@
  :deps {org.clojure/clojure {:mvn/version "1.12.0"}
         io.github.kotoba-lang/kotoba-kir
         {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-         :git/sha "b6d84179a87a12e3de8c5b932127494e8b15b175"}
+         :git/sha "d968c01cdd874e8641006a7c5aeb623c5a37cb51"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
-         :git/sha "af43fc8fa43edb12361828e26456f75b12ab40be"}
+         :git/sha "ba29522ece748d2f7ff420d2ba45b1126c94baf8"}
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
-         :git/sha "85b628f839533ae6f35b23cb6464ce245ea6fdad"}}
+         :git/sha "502f2921c7016b6c3772ca2ea0069b68e28d0b17"}
+        io.github.kotoba-lang/kotoba-wasm
+        {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
+         :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}
+        io.github.kotoba-lang/kotoba-component
+        {:git/url "https://github.com/kotoba-lang/kotoba-component.git"
+         :git/sha "a9d4727821d84b4bef11fa6ff0a68bcc617cd3b8"}}
  :aliases {:test {:extra-paths ["test"]
                   :extra-deps {io.github.cognitect-labs/test-runner
                                {:git/url "https://github.com/cognitect-labs/test-runner.git"
