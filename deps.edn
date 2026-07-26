@@ -2,13 +2,13 @@
  :deps {org.clojure/clojure {:mvn/version "1.12.0"}
         io.github.kotoba-lang/kotoba-kir
         {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-         :git/sha "031ff777fe186ab28e40510c0bac9370fd0a3eef"}
+         :git/sha "b6d84179a87a12e3de8c5b932127494e8b15b175"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
-         :git/sha "da7654ad5e325291130462404d4a9c8e4c634580"}
+         :git/sha "af43fc8fa43edb12361828e26456f75b12ab40be"}
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
-         :git/sha "727ed95f866ade62064a540f7e78f246bd8a247d"}}
+         :git/sha "85b628f839533ae6f35b23cb6464ce245ea6fdad"}}
  :aliases {:test {:extra-paths ["test"]
                   :extra-deps {io.github.cognitect-labs/test-runner
                                {:git/url "https://github.com/cognitect-labs/test-runner.git"
