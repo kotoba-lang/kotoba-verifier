@@ -77,7 +77,8 @@
 ;; backend restriction here would make this verifier ratify one target's
 ;; limits.
 (def ^:private string-operations
-  '{string-byte-length 1 string=? 2 string-concat 2 string-substring 3 string-code-point-at 2})
+  '{string-byte-length 1 string=? 2 string-concat 2 string-substring 3 string-code-point-at 2
+    keyword-name 1 keyword-from-string 1})
 (def ^:private tagged-i64-operations
   '{option-some 1 option-none 0 option-some? 1 option-value 2
     result-ok 1 result-err 1 result-ok? 1 result-value 2 result-error 2})
