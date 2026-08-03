@@ -271,6 +271,10 @@
 
 (declare record-schema-of)
 
+;; Declared result type per function, for resolving a record that arrives boxed
+;; across a call boundary. Bound once per program by `verify-program!`.
+(def ^:dynamic *call-results* {})
+
 ;; The record schema a form denotes, or nil. Three shapes reach here: a direct
 ;; `record-new`, a local bound to one, and -- once a record field may itself be
 ;; a record -- a `record-get` selecting such a field, whose schema is read off
@@ -282,6 +286,10 @@
   (cond
     (and (seq? form) (= 'record-new (first form))) (second form)
     (symbol? form) (get locals form)
+    ;; A call whose declared result is a record: the operand arrived boxed.
+    (and (seq? form) (simple-symbol? (first form)) (contains? *call-results* (first form)))
+    (let [r (get *call-results* (first form))]
+      (when (native-scalar-record-type? r) r))
     (and (seq? form) (= 'record-get (first form)) (= 4 (count form)))
     (let [[_ type value field] form]
       (when (= type (record-schema-of value locals))
@@ -763,7 +771,8 @@
     ;; treated as a failure of that same named condition.
     (when-not (try (boolean (check program)) (catch #?(:clj Throwable :cljs :default) _ false))
       (reject! "runtime KIR module shape rejected" {:condition label})))
-  (let [functions (:functions program)
+  (binding [*call-results* (into {} (map (juxt :name :result) (:functions program)))]
+   (let [functions (:functions program)
         signatures
         (into {}
               (map (fn [function]
@@ -781,7 +790,12 @@
                                     (every? valid-name? (:params function))
                                     (= (count (:params function))
                                        (count (distinct (:params function))))
-                                    (contains? function-result-types (:result function))
+                                    ;; A function may also return a RECORD, which
+                                    ;; crosses the boundary boxed as a pair
+                                    ;; chain -- one word, built from the arena
+                                    ;; primitives already contracted here.
+                                    (or (contains? function-result-types (:result function))
+                                        (native-scalar-record-type? (:result function)))
                                     (or (not (contains? function :param-types))
                                         (and (vector? (:param-types function))
                                              (= (count (:param-types function)) (count (:params function)))
@@ -818,7 +832,7 @@
         (reject! "runtime KIR module effects rejected" {}))
       (when (> cost max-lowered-nodes)
         (reject! "runtime KIR lowering budget exhausted" {:cost cost}))))
-  program)
+  program))
 
 (defn- verify-runtime! [{:keys [target program code exports lowering limits fuel-abi context-abi]
                          profile-value :target-profile}]
