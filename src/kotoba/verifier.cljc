@@ -33,7 +33,16 @@
 (def ^:private max-bindings 4096)
 (def ^:private max-parameters 5)
 (def ^:private max-symbol-chars 128)
-(def ^:private arithmetic '#{+ - * quot bit-xor bit-and})
+;; Independently re-derived from `kotoba.compiler.frontend/arithmetic` ON
+;; PURPOSE -- this verifier must not import the producer's own sets, or it
+;; would ratify whatever the producer decided. The cost of that independence is
+;; that the two can drift, and they did: `bit-or` was added to the frontend, to
+;; `kotoba.kir`'s evaluator, and to the x86-64 backend (ADR-2607254600 D2), but
+;; never here. The drift was in the SAFE direction -- this verifier runs on
+;; every compile and every execution, so it rejected `bit-or` rather than
+;; admitting something unchecked -- which is exactly why it went unnoticed:
+;; nothing broke, `bit-or` was simply dead on every native target.
+(def ^:private arithmetic '#{+ - * quot bit-xor bit-and bit-or})
 (def ^:private comparisons '#{= < > <= >=})
 (def ^:private heap-operations '{pair 2 pair-first 1 pair-second 1})
 (def ^:private kgraph-operations '{kgraph-assert! 3 kgraph-get 2 kgraph-count 1 kgraph-entity-at 2})
@@ -285,7 +294,10 @@
 
         (contains? arithmetic op)
         (do
-          (when (or (empty? args) (and (contains? '#{quot bit-xor bit-and} op) (not= 2 (count args))))
+          ;; The strictly-binary set, mirroring the frontend's own arity gate.
+          ;; `bit-or` belongs here for the same reason its siblings do: `+`/`-`/
+          ;; `*` fold over any number of operands, the rest do not.
+          (when (or (empty? args) (and (contains? '#{quot bit-xor bit-and bit-or} op) (not= 2 (count args))))
             (reject! "runtime KIR arithmetic arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
