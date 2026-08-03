@@ -563,14 +563,16 @@
 ;; `(defn main [] (< a b))` compiles for wasm32, js and cljs but NOT for
 ;; native, and a predicate can only appear in an `if` test position there.
 ;;
-;; Finishing it needs three things together, in this order: `kotoba.kir/lower`
-;; folds a `:bool` entry (sealing the boxed boolean while its `:blocks` keep
-;; the 0/1 word, which 38d1bd0 explicitly leaves as the internal
-;; representation); this set gains `:bool`; and `kototama.native.executor`
-;; reports a boolean for a `:bool` entry rather than requiring an integer.
-;; Widening this set on its own changes nothing, because `lower` still seals
-;; nothing to compare against.
-(def ^:private entry-result-types #{:i64})
+;; That is now done. `kotoba.kir/lower` folds a `:bool` entry and seals the
+;; BOXED boolean (its `:blocks` keep the 0/1 word, which 38d1bd0 explicitly
+;; leaves as the internal representation), so `verify-native-artifact!`'s own
+;; re-execution through `execute` -- which boxes the same way -- is directly
+;; comparable to it. `kototama.native.executor` boxes at its report boundary
+;; for the same reason.
+;;
+;; Note that this set is only reachable at all because `lower` now seals
+;; something: widening it on its own would have changed nothing.
+(def ^:private entry-result-types #{:i64 :bool})
 
 ;; Each shape condition is named so a rejection can say which one failed. The
 ;; whole set used to be one `and` reporting `{}`, which meant the most common
