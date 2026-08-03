@@ -535,18 +535,57 @@
                         direct))]
       (if (= inferred next-effects) inferred (recur next-effects)))))
 
+;; `:i64` only, and deliberately so. `:bool` looks admissible -- both native
+;; backends carry it as the plain 0/1 word every comparison's setcc/cset
+;; sequence already produces, and `kototama.native.executor` only requires the
+;; reported result to be an integer -- but admitting it breaks the oracle.
+;;
+;; Measured (2026-08-03) for `(defn main [] (= 1 1))`:
+;;
+;;   kotoba.kir/lower     :oracle-value  nil     (declines to fold)
+;;   kotoba.kir/execute                  true    (a boolean, not 1)
+;;
+;; versus `(+ 1 1)`, where both are `2`. So the KIR interpreter's value model
+;; has a GENUINE `:bool` while the native backends have only the word 1/0. This
+;; check is what keeps an artifact from sealing an oracle value of `true` over
+;; code that returns the word 1 -- `verify-native-artifact!`'s own
+;; `(= expected-value (:value kexe))` would then be comparing two different
+;; representations of the same fact.
+;;
+;; The consequence is a real and currently intended restriction: because
+;; comparisons infer `:bool`, `(defn main [] (< a b))` compiles for wasm32, js
+;; and cljs but NOT for native, and a predicate can only appear in an `if` test
+;; position there. Lifting it is a decision about the native value model --
+;; either `execute` returns 1/0 for a `:bool` entry, or the backends gain a
+;; real bool representation -- not a widening of this set.
+(def ^:private entry-result-types #{:i64})
+
+;; Each shape condition is named so a rejection can say which one failed. The
+;; whole set used to be one `and` reporting `{}`, which meant the most common
+;; way to hit it -- an entry returning `:bool` -- surfaced as "module shape
+;; rejected" with nothing to go on. A verifier may refuse anything it likes,
+;; but it must be possible to learn what it refused.
+(def ^:private module-shape-checks
+  [[:map (fn [p] (map? p))]
+   [:keys (fn [p] (= #{:format :entry :exports :signature :effects :functions} (set (keys p))))]
+   [:format (fn [p] (contains? #{:kotoba.kir/v3 :kotoba.kir/v4} (:format p)))]
+   [:entry (fn [p] (= 'main (:entry p)))]
+   [:signature-params (fn [p] (= [] (:params (:signature p))))]
+   [:signature-result (fn [p] (contains? entry-result-types (:result (:signature p))))]
+   [:signature-keys (fn [p] (= #{:params :result} (set (keys (:signature p)))))]
+   [:effects-set (fn [p] (set? (:effects p)))]
+   [:effects-valid (fn [p] (every? valid-effect? (:effects p)))]
+   [:functions-vector (fn [p] (vector? (:functions p)))]
+   [:exports-vector (fn [p] (vector? (:exports p)))]
+   [:function-count (fn [p] (<= 1 (count (:functions p)) max-functions))]])
+
 (defn- verify-program! [program]
-  (when-not (and (map? program)
-                 (= #{:format :entry :exports :signature :effects :functions} (set (keys program)))
-                 (contains? #{:kotoba.kir/v3 :kotoba.kir/v4} (:format program))
-                 (= 'main (:entry program))
-                 (= {:params [] :result :i64} (:signature program))
-                 (set? (:effects program))
-                 (every? valid-effect? (:effects program))
-                 (vector? (:functions program))
-                 (vector? (:exports program))
-                 (<= 1 (count (:functions program)) max-functions))
-    (reject! "runtime KIR module shape rejected" {}))
+  (doseq [[label check] module-shape-checks]
+    ;; A hostile program can fail an early check in a way that makes a later
+    ;; one throw rather than return false, so each is guarded and a throw is
+    ;; treated as a failure of that same named condition.
+    (when-not (try (boolean (check program)) (catch #?(:clj Throwable :cljs :default) _ false))
+      (reject! "runtime KIR module shape rejected" {:condition label})))
   (let [functions (:functions program)
         signatures
         (into {}
@@ -561,7 +600,10 @@
                                     (every? valid-name? (:params function))
                                     (= (count (:params function))
                                        (count (distinct (:params function))))
-                                    (= :i64 (:result function))
+                                    ;; See `entry-result-types` for why `:bool`
+                                    ;; is excluded here too, and what lifting it
+                                    ;; would require.
+                                    (contains? entry-result-types (:result function))
                                     (or (not (contains? function :param-types))
                                         (and (vector? (:param-types function))
                                              (= (count (:param-types function)) (count (:params function)))

@@ -80,3 +80,44 @@
         (is (thrown? clojure.lang.ExceptionInfo
                      (conformance/verify-dual-surface!
                       kir surface changed)))))))
+
+;; ---------------------------------------------------------------------------
+;; Module shape rejections name the condition that failed
+;; ---------------------------------------------------------------------------
+
+(def ^:private ok-program
+  {:format :kotoba.kir/v3 :entry 'main :exports ['main]
+   :signature {:params [] :result :i64} :effects #{}
+   :functions [{:name 'main :params [] :result :i64 :effects #{} :body 1}]})
+
+(defn- shape-condition [program]
+  (try (#'kotoba.verifier/verify-program! program) nil
+       (catch clojure.lang.ExceptionInfo e
+         (when (= "runtime KIR module shape rejected" (ex-message e))
+           (:condition (ex-data e))))))
+
+(deftest a-module-shape-rejection-names-the-failing-condition
+  ;; The whole set used to be one `and` reporting `{}`. A verifier may refuse
+  ;; anything it likes, but it must be possible to learn what it refused --
+  ;; without this, the most common way to hit the check (an entry returning a
+  ;; comparison, hence `:bool`) was indistinguishable from a malformed module.
+  (is (nil? (shape-condition ok-program)) "the reference program must verify")
+  (is (= :entry (shape-condition (assoc ok-program :entry 'not-main))))
+  (is (= :format (shape-condition (assoc ok-program :format :kotoba.kir/v9))))
+  (is (= :keys (shape-condition (assoc ok-program :extra 1))))
+  (is (= :signature-result
+         (shape-condition (assoc ok-program :signature {:params [] :result :bool})))
+      "a :bool entry result must be reported as such, not as a shapeless failure")
+  (is (= :function-count (shape-condition (assoc ok-program :functions []))))
+  (is (= :exports-vector (shape-condition (assoc ok-program :exports #{'main}))))
+  (is (= :map (shape-condition "not a program"))
+      "a non-map must fail the first condition rather than throw"))
+
+(deftest a-bool-entry-result-stays-rejected
+  ;; Load-bearing, not incidental. Measured 2026-08-03: for `(= 1 1)`,
+  ;; kotoba.kir/lower seals :oracle-value nil while kotoba.kir/execute returns
+  ;; the boolean `true` -- so the interpreter's value model has a genuine :bool
+  ;; while the native backends have only the word 1/0. Admitting :bool here
+  ;; would let an artifact seal an oracle value of `true` over code returning 1.
+  (is (= :signature-result
+         (shape-condition (assoc ok-program :signature {:params [] :result :bool})))))
