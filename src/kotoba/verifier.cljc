@@ -574,12 +574,12 @@
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
         (contains? '#{kernel-load-u8 kernel-load-u8-4k kernel-load-u8-16k
-                      kernel-store-u8 kernel-store-u8-4k
+                      kernel-store-u8 kernel-store-u8-4k kernel-subregion
                       kernel-load-u32 kernel-store-u32} op)
         (do
           (when-not (= ({'kernel-load-u8 3 'kernel-load-u8-4k 3
                          'kernel-load-u8-16k 3 'kernel-store-u8 4
-                         'kernel-store-u8-4k 4
+                         'kernel-store-u8-4k 4 'kernel-subregion 4
                          'kernel-load-u32 3 'kernel-store-u32 4} op) (count args))
             (reject! "runtime KIR kernel memory operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
