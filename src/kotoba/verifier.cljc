@@ -737,6 +737,19 @@
    [:exports-vector (fn [p] (vector? (:exports p)))]
    [:function-count (fn [p] (<= 1 (count (:functions p)) max-functions))]])
 
+(defn- valid-closure-param-indexes? [function]
+  (if-not (contains? function :closure-param-indexes)
+    true
+    (let [indexes (:closure-param-indexes function)
+          param-types (or (:param-types function)
+                          (vec (repeat (count (:params function)) :i64)))]
+      (and (vector? indexes)
+           (= indexes (vec (sort (distinct indexes))))
+           (every? #(and (integer? %) (<= 0 %)
+                         (< % (count (:params function)))
+                         (= :i64 (nth param-types % nil)))
+                   indexes)))))
+
 (defn- verify-program! [program]
   (doseq [[label check] module-shape-checks]
     ;; A hostile program can fail an early check in a way that makes a later
@@ -749,9 +762,12 @@
         (into {}
               (map (fn [function]
                      (when-not (and (map? function)
-                                    (contains? #{#{:name :params :result :effects :body}
-                                                 #{:name :params :result :effects :body :param-types}}
-                                               (set (keys function)))
+                                    (let [keys* (set (keys function))
+                                          required #{:name :params :result :effects :body}
+                                          admitted (conj required :param-types
+                                                         :closure-param-indexes)]
+                                      (and (set/subset? required keys*)
+                                           (set/subset? keys* admitted)))
                                     (valid-name? (:name function))
                                     (vector? (:params function))
                                     (<= (count (:params function)) max-parameters)
@@ -763,6 +779,7 @@
                                         (and (vector? (:param-types function))
                                              (= (count (:param-types function)) (count (:params function)))
                                              (every? #{:i64 :string} (:param-types function))))
+                                    (valid-closure-param-indexes? function)
                                     (set? (:effects function))
                                     (every? valid-effect? (:effects function)))
                        (reject! "runtime KIR function shape rejected" {:function (:name function)}))

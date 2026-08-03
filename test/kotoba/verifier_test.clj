@@ -113,6 +113,24 @@
   (is (= :map (shape-condition "not a program"))
       "a non-map must fail the first condition rather than throw"))
 
+(deftest closure-parameter-refinement-is-checked
+  (let [consumer {:name 'consume :params ['closure] :param-types [:i64]
+                  :closure-param-indexes [0]
+                  :result :i64 :effects #{} :body 'closure}
+        program (update ok-program :functions conj consumer)]
+    (is (= program (#'kotoba.verifier/verify-program! program)))
+    (doseq [indexes [[1] [0 0] [0 -1] ["0"]]]
+      (testing (pr-str indexes)
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+             (#'kotoba.verifier/verify-program!
+              (assoc-in program [:functions 1 :closure-param-indexes] indexes))))))
+    (testing "the refined parameter keeps its i64 ABI type"
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+           (#'kotoba.verifier/verify-program!
+            (assoc-in program [:functions 1 :param-types] [:string])))))))
+
 (deftest a-bool-entry-result-is-admitted
   ;; kotoba-kir 38d1bd0 (2026-07-31) decided the value LEAVING a target is a
   ;; host boolean, and wasm/ESM/reference all box one. Native was the target
