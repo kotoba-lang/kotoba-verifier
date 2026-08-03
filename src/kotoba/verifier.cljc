@@ -535,29 +535,41 @@
                         direct))]
       (if (= inferred next-effects) inferred (recur next-effects)))))
 
-;; `:i64` only, and deliberately so. `:bool` looks admissible -- both native
-;; backends carry it as the plain 0/1 word every comparison's setcc/cset
-;; sequence already produces, and `kototama.native.executor` only requires the
-;; reported result to be an integer -- but admitting it breaks the oracle.
+;; `:i64` only -- but as a CONSEQUENCE of unfinished work, not as a judgement
+;; that `:bool` is wrong here. Widening this set alone would not help, and the
+;; reason is worth stating precisely, because the obvious reading of the native
+;; backends gets it backwards.
 ;;
-;; Measured (2026-08-03) for `(defn main [] (= 1 1))`:
+;; The convention is already decided (`kotoba-kir` 38d1bd0, 2026-07-31, "box a
+;; :bool result at the execute boundary"): `:bool` is a plain 0/1 word INSIDE
+;; the interpreter, inside a wasm module, and in the native backends' own
+;; setcc/cset sequences -- but the value that LEAVES a target is a host
+;; boolean. `kotoba.wasm.core` emits an export wrapper that boxes one, the
+;; restricted-ESM emitter returns one, and the reference interpreter was made
+;; to box one so all three shared corpora agree on the same value for a
+;; predicate. A `:bool` ARGUMENT has always required a real boolean, so the two
+;; directions are symmetric.
 ;;
-;;   kotoba.kir/lower     :oracle-value  nil     (declines to fold)
-;;   kotoba.kir/execute                  true    (a boolean, not 1)
+;; Native is simply the target that has not been carried across that boundary
+;; yet. Measured 2026-08-03 for `(defn main [] (= 1 1))`:
 ;;
-;; versus `(+ 1 1)`, where both are `2`. So the KIR interpreter's value model
-;; has a GENUINE `:bool` while the native backends have only the word 1/0. This
-;; check is what keeps an artifact from sealing an oracle value of `true` over
-;; code that returns the word 1 -- `verify-native-artifact!`'s own
-;; `(= expected-value (:value kexe))` would then be comparing two different
-;; representations of the same fact.
+;;   kotoba.kir/lower     :oracle-value  nil     -- its fold guard is :i64-only
+;;   kotoba.kir/execute                  true    -- boxed, per 38d1bd0
 ;;
-;; The consequence is a real and currently intended restriction: because
-;; comparisons infer `:bool`, `(defn main [] (< a b))` compiles for wasm32, js
-;; and cljs but NOT for native, and a predicate can only appear in an `if` test
-;; position there. Lifting it is a decision about the native value model --
-;; either `execute` returns 1/0 for a `:bool` entry, or the backends gain a
-;; real bool representation -- not a widening of this set.
+;; versus `(+ 1 1)`, where both are `2`. So the oracle cannot be sealed for a
+;; `:bool` entry at all, and this set is downstream of that.
+;;
+;; The visible consequence: because comparisons infer `:bool`,
+;; `(defn main [] (< a b))` compiles for wasm32, js and cljs but NOT for
+;; native, and a predicate can only appear in an `if` test position there.
+;;
+;; Finishing it needs three things together, in this order: `kotoba.kir/lower`
+;; folds a `:bool` entry (sealing the boxed boolean while its `:blocks` keep
+;; the 0/1 word, which 38d1bd0 explicitly leaves as the internal
+;; representation); this set gains `:bool`; and `kototama.native.executor`
+;; reports a boolean for a `:bool` entry rather than requiring an integer.
+;; Widening this set on its own changes nothing, because `lower` still seals
+;; nothing to compare against.
 (def ^:private entry-result-types #{:i64})
 
 ;; Each shape condition is named so a rejection can say which one failed. The
