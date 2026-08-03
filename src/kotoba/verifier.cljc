@@ -325,6 +325,16 @@
             (reject! "runtime KIR arithmetic arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
+        ;; `bool-not` takes one operand and yields the same :bool the
+        ;; comparisons do. Independently re-derived like every set beside it;
+        ;; the rest of `typed-safe-value-operations` (option/result) is handled
+        ;; by its own cases further down.
+        (= op 'bool-not)
+        (do
+          (when-not (= 1 (count args))
+            (reject! "runtime KIR bool-not arity rejected" {:operation op}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
         (contains? i32-operations op)
         (do
           (when-not (= (get i32-operations op) (count args))
