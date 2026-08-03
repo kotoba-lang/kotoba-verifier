@@ -43,6 +43,17 @@
 ;; admitting something unchecked -- which is exactly why it went unnoticed:
 ;; nothing broke, `bit-or` was simply dead on every native target.
 (def ^:private arithmetic '#{+ - * quot bit-xor bit-and bit-or})
+;; `kotoba.compiler.frontend/i64-operations`, independently re-derived for the
+;; same reason `arithmetic` is. Held separately because the shift forms carry an
+;; operand restriction no other arithmetic has: the count must be an integer
+;; LITERAL in [0,63]. That restriction is load-bearing, not cosmetic -- it is
+;; the only reason the native backends may lower these onto CL / x1 without
+;; emitting a range check, since the hardware would otherwise silently truncate
+;; the count mod 64 where `kotoba.kir`'s evaluator traps. A verifier that
+;; admitted a non-literal or out-of-range count would therefore admit an
+;; artifact whose code and whose sealed oracle value disagree.
+(def ^:private i64-operations '{bit-not 1 i64-shift-left 2 i64-shift-right 2 u64-shift-right 2})
+(def ^:private i64-shifts '#{i64-shift-left i64-shift-right u64-shift-right})
 (def ^:private comparisons '#{= < > <= >=})
 (def ^:private heap-operations '{pair 2 pair-first 1 pair-second 1})
 (def ^:private kgraph-operations '{kgraph-assert! 3 kgraph-get 2 kgraph-count 1 kgraph-entity-at 2})
@@ -299,6 +310,20 @@
           ;; `*` fold over any number of operands, the rest do not.
           (when (or (empty? args) (and (contains? '#{quot bit-xor bit-and bit-or} op) (not= 2 (count args))))
             (reject! "runtime KIR arithmetic arity rejected" {:operation op}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        (contains? i64-operations op)
+        (do
+          (when-not (= (get i64-operations op) (count args))
+            (reject! "runtime KIR i64 operation arity rejected" {:operation op}))
+          ;; Re-derived from the frontend's own gate rather than trusted from
+          ;; it. `integer?` is the right predicate on both runtimes here: an
+          ;; out-of-range or non-literal count is what must be caught, and a
+          ;; count in [0,63] is small enough that no bigint representation
+          ;; question arises.
+          (when (and (contains? i64-shifts op)
+                     (not (and (integer? (second args)) (<= 0 (second args) 63))))
+            (reject! "runtime KIR i64 shift count rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
         (contains? comparisons op)
