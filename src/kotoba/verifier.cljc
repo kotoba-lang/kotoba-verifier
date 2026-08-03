@@ -70,7 +70,14 @@
 (def ^:private comparisons '#{= < > <= >=})
 (def ^:private heap-operations '{pair 2 pair-first 1 pair-second 1})
 (def ^:private kgraph-operations '{kgraph-assert! 3 kgraph-get 2 kgraph-count 1 kgraph-entity-at 2})
-(def ^:private string-operations '{string-byte-length 1 string=? 2 string-concat 2})
+;; `string-substring` is admitted here as the target-independent operation it
+;; is. The narrowing to an all-ASCII literal operand lives in the native
+;; backends, not in this table: a shape they cannot emit is reported by them as
+;; not implemented, which is accurate and fail-closed, whereas encoding a
+;; backend restriction here would make this verifier ratify one target's
+;; limits.
+(def ^:private string-operations
+  '{string-byte-length 1 string=? 2 string-concat 2 string-substring 3})
 (def ^:private tagged-i64-operations
   '{option-some 1 option-none 0 option-some? 1 option-value 2
     result-ok 1 result-err 1 result-ok? 1 result-value 2 result-error 2})
@@ -621,6 +628,22 @@
 ;; something: widening it on its own would have changed nothing.
 (def ^:private entry-result-types #{:i64 :bool})
 
+;; An INTERNAL function may also return a `:string`. This is deliberately wider
+;; than `entry-result-types`, and the two are separate because they answer
+;; different questions: the entry's result crosses to the host, which is why
+;; `:bool` needed boxing on every target before it could be admitted there,
+;; whereas an internal result only has to be a value the ABI can carry in a
+;; register.
+;;
+;; A string already is such a value -- it IS a pair(offset,length) handle, one
+;; word, indistinguishable from an i64 at a call boundary -- and this same shape
+;; check has always admitted `:string` PARAMETERS. Admitting it in one direction
+;; and not the other was an asymmetry rather than a rule: it made
+;; `(defn f [n] (string-substring ...))` unverifiable, and with it every
+;; string-returning helper the frontend synthesizes, `string-from-i64` among
+;; them. Nothing had a string-returning function before, so nothing caught it.
+(def ^:private function-result-types #{:i64 :bool :string})
+
 ;; Each shape condition is named so a rejection can say which one failed. The
 ;; whole set used to be one `and` reporting `{}`, which meant the most common
 ;; way to hit it -- an entry returning `:bool` -- surfaced as "module shape
@@ -661,10 +684,7 @@
                                     (every? valid-name? (:params function))
                                     (= (count (:params function))
                                        (count (distinct (:params function))))
-                                    ;; See `entry-result-types` for why `:bool`
-                                    ;; is excluded here too, and what lifting it
-                                    ;; would require.
-                                    (contains? entry-result-types (:result function))
+                                    (contains? function-result-types (:result function))
                                     (or (not (contains? function :param-types))
                                         (and (vector? (:param-types function))
                                              (= (count (:param-types function)) (count (:params function)))
