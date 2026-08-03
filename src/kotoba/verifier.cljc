@@ -230,6 +230,20 @@
 
 (declare verify-expr!)
 
+;; `locals` maps each name to the record schema it was bound with, or nil. It
+;; used to be a set of names, which was enough while a record could only ever
+;; appear as a directly-nested `record-new` under its own `record-get`: there
+;; was nothing about a local worth remembering. Admitting a LET-BOUND record
+;; means the projection has to be checkable against what the name was bound
+;; with, which a set cannot answer.
+;;
+;; Re-derived here rather than trusted: the schema is only remembered when the
+;; bound value really is a `record-new` this verifier would itself admit.
+(defn- record-new-schema [value]
+  (when (and (seq? value) (= 'record-new (first value))
+             (native-scalar-record-type? (second value)))
+    (second value)))
+
 (defn- verify-bindings! [bindings locals signatures depth nodes facts]
   (when-not (and (vector? bindings) (even? (count bindings))
                  (<= (quot (count bindings) 2) max-bindings))
@@ -243,7 +257,7 @@
         (when-not (valid-name? name)
           (reject! "runtime KIR local name rejected" {:name name}))
         (verify-expr! value env signatures (inc depth) nodes facts)
-        (recur (next pairs) (conj env name)))
+        (recur (next pairs) (assoc env name (record-new-schema value))))
       env)))
 
 (defn- verify-expr! [form locals signatures depth nodes facts]
@@ -392,7 +406,10 @@
                         (native-scalar-record-type? type)
                         (keyword? field)
                         (some #(= field (first %)) (nth type 2))
-                        (seq? value) (= 'record-new (first value)) (= type (second value)))
+                        (or (and (seq? value) (= 'record-new (first value)) (= type (second value)))
+                            ;; ... or a local bound to a record-new of the very
+                            ;; same schema, which `verify-bindings!` recorded.
+                            (and (symbol? value) (= type (get locals value)))))
             (reject! "runtime KIR record projection rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts))
 
@@ -426,7 +443,7 @@
             (reject! "runtime KIR variant dispatch rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
           (doseq [[_ binder body] branches]
-            (verify-expr! body (conj locals binder) signatures (inc depth) nodes facts)))
+            (verify-expr! body (assoc locals binder nil) signatures (inc depth) nodes facts)))
 
         (contains? '#{option-some-of option-some?-of} op)
         (let [[type value] args]
@@ -461,7 +478,7 @@
             (reject! "runtime KIR generic option match rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
           (verify-expr! none-body locals signatures (inc depth) nodes facts)
-          (verify-expr! some-body (conj locals binder) signatures
+          (verify-expr! some-body (assoc locals binder nil) signatures
                         (inc depth) nodes facts))
 
         (contains? '#{result-ok-of result-err-of result-ok?-of} op)
@@ -489,9 +506,9 @@
                          (valid-name? ok-binder) (valid-name? err-binder))
             (reject! "runtime KIR generic result match rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
-          (verify-expr! ok-body (conj locals ok-binder) signatures
+          (verify-expr! ok-body (assoc locals ok-binder nil) signatures
                         (inc depth) nodes facts)
-          (verify-expr! err-body (conj locals err-binder) signatures
+          (verify-expr! err-body (assoc locals err-binder nil) signatures
                         (inc depth) nodes facts))
 
         (contains? heap-operations op)
@@ -705,7 +722,7 @@
           (into {}
                 (map (fn [function]
                        (let [facts (volatile! {:effects #{} :calls #{}})]
-                         (verify-expr! (:body function) (set (:params function))
+                         (verify-expr! (:body function) (zipmap (:params function) (repeat nil))
                                        signatures 0 nodes facts)
                          [(:name function) @facts])))
                 functions)
