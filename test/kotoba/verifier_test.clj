@@ -131,6 +131,23 @@
            (#'kotoba.verifier/verify-program!
             (assoc-in program [:functions 1 :param-types] [:string])))))))
 
+(deftest closure-result-refinement-is-checked
+  (let [maker {:name 'make :params [] :param-types []
+               :closure-result? true
+               :result :i64 :effects #{} :body 0}
+        program (update ok-program :functions conj maker)]
+    (is (= program (#'kotoba.verifier/verify-program! program)))
+    (doseq [value [false 1 :yes]]
+      (testing (pr-str value)
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+             (#'kotoba.verifier/verify-program!
+              (assoc-in program [:functions 1 :closure-result?] value))))))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+         (#'kotoba.verifier/verify-program!
+          (assoc-in program [:functions 1 :result] :string))))))
+
 (deftest a-bool-entry-result-is-admitted
   ;; kotoba-kir 38d1bd0 (2026-07-31) decided the value LEAVING a target is a
   ;; host boolean, and wasm/ESM/reference all box one. Native was the target

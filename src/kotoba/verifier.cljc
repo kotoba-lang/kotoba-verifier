@@ -750,6 +750,12 @@
                          (= :i64 (nth param-types % nil)))
                    indexes)))))
 
+(defn- valid-closure-result-refinement? [function]
+  (if-not (contains? function :closure-result?)
+    true
+    (and (true? (:closure-result? function))
+         (= :i64 (:result function)))))
+
 (defn- verify-program! [program]
   (doseq [[label check] module-shape-checks]
     ;; A hostile program can fail an early check in a way that makes a later
@@ -765,7 +771,8 @@
                                     (let [keys* (set (keys function))
                                           required #{:name :params :result :effects :body}
                                           admitted (conj required :param-types
-                                                         :closure-param-indexes)]
+                                                         :closure-param-indexes
+                                                         :closure-result?)]
                                       (and (set/subset? required keys*)
                                            (set/subset? keys* admitted)))
                                     (valid-name? (:name function))
@@ -780,6 +787,7 @@
                                              (= (count (:param-types function)) (count (:params function)))
                                              (every? #{:i64 :string} (:param-types function))))
                                     (valid-closure-param-indexes? function)
+                                    (valid-closure-result-refinement? function)
                                     (set? (:effects function))
                                     (every? valid-effect? (:effects function)))
                        (reject! "runtime KIR function shape rejected" {:function (:name function)}))
