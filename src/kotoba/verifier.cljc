@@ -103,7 +103,7 @@
 ;; `:f64` is excluded because the compiler rejects any f64 on native
 ;; independently of records; `:keyword` because the backends have no keyword
 ;; representation at all.
-(def ^:private native-word-field-types #{:i64 :bool :string})
+(def ^:private native-word-field-types #{:i64 :bool :string :keyword})
 
 (defn- native-scalar-record-type? [type]
   (and (vector? type) (= 3 (count type)) (= :record (first type))
@@ -173,6 +173,10 @@
     #?(:clj (integer? form) :cljs (or (i64/bigint-value? form) (integer? form)))
     1
     (string? form) 1
+    ;; A keyword literal, reachable the same way a string one is -- as a record
+    ;; field or variant payload value. Costed the same flat 1: on native it
+    ;; lowers to the same one-word handle a string literal does.
+    (keyword? form) 1
     ;; A bare literal `true`/`false` (only reachable via a record field
     ;; value, see `verify-expr!`'s own comment below) -- costed the same
     ;; flat 1 as any other scalar literal.
@@ -302,6 +306,14 @@
     (string? form)
     (when-not (<= (utf8-byte-count form) string-literal-byte-limit)
       (reject! "runtime KIR string literal exceeds byte limit" {:bytes (utf8-byte-count form)}))
+
+    ;; A keyword literal is a value, carried on native as the same one-word
+    ;; handle a string is, over its PRINTED text -- so the same byte bound
+    ;; applies, measured over that text rather than over the name alone.
+    (keyword? form)
+    (when-not (<= (utf8-byte-count (str form)) string-literal-byte-limit)
+      (reject! "runtime KIR keyword literal exceeds byte limit"
+               {:bytes (utf8-byte-count (str form))}))
 
     (seq? form)
     (let [[op & args] form]
