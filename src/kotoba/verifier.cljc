@@ -131,7 +131,10 @@
        (vector? (nth type 2)) (seq (nth type 2)) (<= (count (nth type 2)) max-variant-cases)
        (every? (fn [case-entry]
                  (and (vector? case-entry) (= 2 (count case-entry)) (keyword? (first case-entry))
-                      (contains? native-word-field-types (second case-entry))))
+                      ;; A case payload may itself be a record, which the
+                      ;; backends flatten into the dispatch's payload slots.
+                      (or (contains? native-word-field-types (second case-entry))
+                          (native-scalar-record-type? (second case-entry)))))
                (nth type 2))
        (= (count (nth type 2)) (count (distinct (map first (nth type 2)))))))
 
@@ -489,8 +492,15 @@
                         (some #(= (nth value 2) (first %)) cases))
             (reject! "runtime KIR variant dispatch rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
-          (doseq [[_ binder body] branches]
-            (verify-expr! body (assoc locals binder nil) signatures (inc depth) nodes facts)))
+          ;; Each branch's binder carries the schema of ITS OWN declared case
+          ;; payload when that payload is a record, so a projection inside the
+          ;; branch is checkable the same way one over a let-bound record is.
+          ;; Cases and branches are already known to be tag-aligned above.
+          (doseq [[[_ payload-type] [_ binder body]] (map vector cases branches)]
+            (verify-expr! body
+                          (assoc locals binder
+                                 (when (native-scalar-record-type? payload-type) payload-type))
+                          signatures (inc depth) nodes facts)))
 
         (contains? '#{option-some-of option-some?-of} op)
         (let [[type value] args]
