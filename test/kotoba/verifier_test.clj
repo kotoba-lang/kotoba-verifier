@@ -148,6 +148,30 @@
          (#'kotoba.verifier/verify-program!
           (assoc-in program [:functions 1 :result] :string))))))
 
+(deftest i64-pair-chain-parameter-refinement-is-checked
+  (let [consumer {:name 'consume :params ['args] :param-types [:i64]
+                  :i64-pair-chain-param-indexes [0]
+                  :result :i64 :effects #{} :body 'args}
+        program (update ok-program :functions conj consumer)]
+    (is (= program (#'kotoba.verifier/verify-program! program)))
+    (doseq [indexes [[1] [0 0] [0 -1] ["0"]]]
+      (testing (pr-str indexes)
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+             (#'kotoba.verifier/verify-program!
+              (assoc-in program [:functions 1 :i64-pair-chain-param-indexes]
+                        indexes))))))
+    (testing "the refined parameter keeps its i64 ABI type"
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+           (#'kotoba.verifier/verify-program!
+            (assoc-in program [:functions 1 :param-types] [:string])))))
+    (testing "pair-chain and closure refinements cannot overlap"
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+           (#'kotoba.verifier/verify-program!
+            (assoc-in program [:functions 1 :closure-param-indexes] [0])))))))
+
 (deftest a-bool-entry-result-is-admitted
   ;; kotoba-kir 38d1bd0 (2026-07-31) decided the value LEAVING a target is a
   ;; host boolean, and wasm/ESM/reference all box one. Native was the target
