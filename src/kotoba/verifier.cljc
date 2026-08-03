@@ -93,13 +93,25 @@
 ;; reasoning already documented at every other op-family in this file: none
 ;; of `arithmetic`/`heap-operations`/`kgraph-operations`/... share a helper
 ;; with the emitters/admission they cross-check either).
+;; What a record field or variant payload may hold on native: whatever fits in
+;; ONE WORD. Independently re-derived like every other set in this file.
+;;
+;; `:string` belongs because a string value on native already IS a one-word
+;; `pair(offset,length)` handle -- the same width as an `:i64` -- so it needs no
+;; representation the slot machinery does not already have.
+;;
+;; `:f64` is excluded because the compiler rejects any f64 on native
+;; independently of records; `:keyword` because the backends have no keyword
+;; representation at all.
+(def ^:private native-word-field-types #{:i64 :bool :string})
+
 (defn- native-scalar-record-type? [type]
   (and (vector? type) (= 3 (count type)) (= :record (first type))
        (keyword? (second type)) (some? (namespace (second type)))
        (vector? (nth type 2)) (seq (nth type 2)) (<= (count (nth type 2)) max-record-fields)
        (every? (fn [field]
                  (and (vector? field) (= 2 (count field)) (keyword? (first field))
-                      (contains? #{:i64 :bool} (second field))))
+                      (contains? native-word-field-types (second field))))
                (nth type 2))
        (= (count (nth type 2)) (count (distinct (map first (nth type 2)))))))
 
@@ -113,7 +125,7 @@
        (vector? (nth type 2)) (seq (nth type 2)) (<= (count (nth type 2)) max-variant-cases)
        (every? (fn [case-entry]
                  (and (vector? case-entry) (= 2 (count case-entry)) (keyword? (first case-entry))
-                      (contains? #{:i64 :bool} (second case-entry))))
+                      (contains? native-word-field-types (second case-entry))))
                (nth type 2))
        (= (count (nth type 2)) (count (distinct (map first (nth type 2)))))))
 
