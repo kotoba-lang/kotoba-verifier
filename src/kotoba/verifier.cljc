@@ -642,12 +642,15 @@
         ;; so verification is an arity check plus a walk of the operands,
         ;; exactly as for the integer arithmetic above.
         (contains? '#{f64-add f64-sub f64-mul f64-div f64-min f64-max
-                      f64-abs f64-neg f64-sqrt f64-from-bits f64-to-bits} op)
+                      f64-abs f64-neg f64-sqrt f64-from-bits f64-to-bits
+                      f64-eq f64-lt f64-le f64-gt f64-ge f64-unordered} op)
         (do
           (when-not (= ({'f64-add 2 'f64-sub 2 'f64-mul 2 'f64-div 2
                          'f64-min 2 'f64-max 2
                          'f64-abs 1 'f64-neg 1 'f64-sqrt 1
-                         'f64-from-bits 1 'f64-to-bits 1} op)
+                         'f64-from-bits 1 'f64-to-bits 1
+                         'f64-eq 2 'f64-lt 2 'f64-le 2 'f64-gt 2 'f64-ge 2
+                         'f64-unordered 2} op)
                        (count args))
             (reject! "runtime KIR f64 operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
