@@ -113,11 +113,13 @@
   (is (= :map (shape-condition "not a program"))
       "a non-map must fail the first condition rather than throw"))
 
-(deftest a-bool-entry-result-stays-rejected
-  ;; Load-bearing, not incidental. Measured 2026-08-03: for `(= 1 1)`,
-  ;; kotoba.kir/lower seals :oracle-value nil while kotoba.kir/execute returns
-  ;; the boolean `true` -- so the interpreter's value model has a genuine :bool
-  ;; while the native backends have only the word 1/0. Admitting :bool here
-  ;; would let an artifact seal an oracle value of `true` over code returning 1.
+(deftest a-bool-entry-result-stays-rejected-until-lower-can-fold-it
+  ;; Not a judgement that :bool is wrong at this boundary -- kotoba-kir 38d1bd0
+  ;; (2026-07-31) already decided that the value LEAVING a target is a host
+  ;; boolean, and wasm/ESM/reference all box one. Native has not been carried
+  ;; across yet: kotoba.kir/lower's oracle fold guard is :i64-only, so nothing
+  ;; is sealed for a :bool entry and there is nothing for the oracle check to
+  ;; compare against. Widening this set alone would change nothing. See the
+  ;; `entry-result-types` comment for the three changes that finish it.
   (is (= :signature-result
          (shape-condition (assoc ok-program :signature {:params [] :result :bool})))))
