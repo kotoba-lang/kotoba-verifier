@@ -105,13 +105,19 @@
 ;; representation at all.
 (def ^:private native-word-field-types #{:i64 :bool :string :keyword})
 
+(declare native-scalar-record-type?)
+
 (defn- native-scalar-record-type? [type]
   (and (vector? type) (= 3 (count type)) (= :record (first type))
        (keyword? (second type)) (some? (namespace (second type)))
        (vector? (nth type 2)) (seq (nth type 2)) (<= (count (nth type 2)) max-record-fields)
        (every? (fn [field]
                  (and (vector? field) (= 2 (count field)) (keyword? (first field))
-                      (contains? native-word-field-types (second field))))
+                      ;; A record field may itself be a record: the backends
+                      ;; flatten it into the enclosing record's slots,
+                      ;; recursively, so nothing gains a runtime representation.
+                      (or (contains? native-word-field-types (second field))
+                          (native-scalar-record-type? (second field)))))
                (nth type 2))
        (= (count (nth type 2)) (count (distinct (map first (nth type 2)))))))
 
@@ -259,6 +265,26 @@
   (when (and (seq? value) (= 'record-new (first value))
              (native-scalar-record-type? (second value)))
     (second value)))
+
+(declare record-schema-of)
+
+;; The record schema a form denotes, or nil. Three shapes reach here: a direct
+;; `record-new`, a local bound to one, and -- once a record field may itself be
+;; a record -- a `record-get` selecting such a field, whose schema is read off
+;; the OUTER type's own field list rather than tracked separately.
+;;
+;; That last case is what makes a chained projection verifiable without the
+;; intermediate record ever becoming a value.
+(defn- record-schema-of [form locals]
+  (cond
+    (and (seq? form) (= 'record-new (first form))) (second form)
+    (symbol? form) (get locals form)
+    (and (seq? form) (= 'record-get (first form)) (= 4 (count form)))
+    (let [[_ type value field] form]
+      (when (= type (record-schema-of value locals))
+        (let [field-type (second (first (filter #(= field (first %)) (nth type 2))))]
+          (when (native-scalar-record-type? field-type) field-type))))
+    :else nil))
 
 (defn- verify-bindings! [bindings locals signatures depth nodes facts]
   (when-not (and (vector? bindings) (even? (count bindings))
@@ -430,10 +456,7 @@
                         (native-scalar-record-type? type)
                         (keyword? field)
                         (some #(= field (first %)) (nth type 2))
-                        (or (and (seq? value) (= 'record-new (first value)) (= type (second value)))
-                            ;; ... or a local bound to a record-new of the very
-                            ;; same schema, which `verify-bindings!` recorded.
-                            (and (symbol? value) (= type (get locals value)))))
+                        (= type (record-schema-of value locals)))
             (reject! "runtime KIR record projection rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts))
 
