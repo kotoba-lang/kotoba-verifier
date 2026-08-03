@@ -538,6 +538,21 @@
                      {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
+        ;; f64 scalar arithmetic. Each takes and returns one machine word --
+        ;; an IEEE-754 bit pattern -- allocates nothing and touches no memory,
+        ;; so verification is an arity check plus a walk of the operands,
+        ;; exactly as for the integer arithmetic above.
+        (contains? '#{f64-add f64-sub f64-mul f64-div f64-min f64-max
+                      f64-abs f64-neg f64-sqrt f64-from-bits f64-to-bits} op)
+        (do
+          (when-not (= ({'f64-add 2 'f64-sub 2 'f64-mul 2 'f64-div 2
+                         'f64-min 2 'f64-max 2
+                         'f64-abs 1 'f64-neg 1 'f64-sqrt 1
+                         'f64-from-bits 1 'f64-to-bits 1} op)
+                       (count args))
+            (reject! "runtime KIR f64 operation arity rejected" {:operation op}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
         (contains? signatures op)
         (do
           (when-not (= (count (get signatures op)) (count args))
@@ -761,7 +776,19 @@
                   {:hir-format (if typed-values? :kotoba.hir/v3 :kotoba.hir/v2)
                    :kir-format kir-format
                    :target target :target-profile target-profile
-                   :value-abi (if typed-values? :kotoba.typed/externref-v1 :kotoba.i64/direct-v1)})]
+                   ;; The compiler picks the value ABI by whether the program
+                   ;; uses floating point, before falling back to the typed or
+                   ;; direct word ABI. This mirrored only the last two, so an
+                   ;; f64 program -- which the compiler stamps
+                   ;; :kotoba.typed/mixed-f64-v2 -- could never match anything
+                   ;; derivable here. Deriving it from the KIR this verifier
+                   ;; holds keeps the check independent of what the artifact
+                   ;; claims.
+                   :value-abi (cond
+                                (ir/uses-f32? (:program kexe)) :kotoba.typed/mixed-f32-f64-v3
+                                (ir/uses-f64? (:program kexe)) :kotoba.typed/mixed-f64-v2
+                                typed-values? :kotoba.typed/externref-v1
+                                :else :kotoba.i64/direct-v1)})]
     (when-not (= expected compatibility)
       (reject! "native compatibility metadata rejected" {:target target})))
   (let [kernel-operations '#{kernel-load-u8 kernel-load-u8-4k kernel-load-u8-16k
