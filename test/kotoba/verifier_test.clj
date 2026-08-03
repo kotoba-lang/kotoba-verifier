@@ -106,20 +106,22 @@
   (is (= :format (shape-condition (assoc ok-program :format :kotoba.kir/v9))))
   (is (= :keys (shape-condition (assoc ok-program :extra 1))))
   (is (= :signature-result
-         (shape-condition (assoc ok-program :signature {:params [] :result :bool})))
-      "a :bool entry result must be reported as such, not as a shapeless failure")
+         (shape-condition (assoc ok-program :signature {:params [] :result :string})))
+      "an unsupported entry result must be reported as such, not as a shapeless failure")
   (is (= :function-count (shape-condition (assoc ok-program :functions []))))
   (is (= :exports-vector (shape-condition (assoc ok-program :exports #{'main}))))
   (is (= :map (shape-condition "not a program"))
       "a non-map must fail the first condition rather than throw"))
 
-(deftest a-bool-entry-result-stays-rejected-until-lower-can-fold-it
-  ;; Not a judgement that :bool is wrong at this boundary -- kotoba-kir 38d1bd0
-  ;; (2026-07-31) already decided that the value LEAVING a target is a host
-  ;; boolean, and wasm/ESM/reference all box one. Native has not been carried
-  ;; across yet: kotoba.kir/lower's oracle fold guard is :i64-only, so nothing
-  ;; is sealed for a :bool entry and there is nothing for the oracle check to
-  ;; compare against. Widening this set alone would change nothing. See the
-  ;; `entry-result-types` comment for the three changes that finish it.
-  (is (= :signature-result
-         (shape-condition (assoc ok-program :signature {:params [] :result :bool})))))
+(deftest a-bool-entry-result-is-admitted
+  ;; kotoba-kir 38d1bd0 (2026-07-31) decided the value LEAVING a target is a
+  ;; host boolean, and wasm/ESM/reference all box one. Native was the target
+  ;; not yet carried across. What blocked it was kotoba.kir/lower's oracle fold
+  ;; guard being :i64-only -- nothing was sealed for a :bool entry, so the
+  ;; oracle check had nothing to compare against, and widening this set alone
+  ;; would have changed nothing. lower now folds and seals the boxed boolean.
+  (is (nil? (shape-condition (assoc ok-program :signature {:params [] :result :bool}))))
+  (is (nil? (shape-condition ok-program)))
+  (testing "a result type outside the pair is still rejected, and says so"
+    (is (= :signature-result
+           (shape-condition (assoc ok-program :signature {:params [] :result :string}))))))
