@@ -1,5 +1,7 @@
 /Users/junkawasaki/.gitlibs/libs/io.github.cognitect-labs/test-runner/dfb30dd6605cb6c0efc275e1df1736f6e90d4d73/deps.edn
-/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/artifact/da7654ad5e325291130462404d4a9c8e4c634580/deps.edn
-/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/kotoba-kir/031ff777fe186ab28e40510c0bac9370fd0a3eef/deps.edn
+/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/artifact/ba29522ece748d2f7ff420d2ba45b1126c94baf8/deps.edn
+/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/kotoba-kir/d968c01cdd874e8641006a7c5aeb623c5a37cb51/deps.edn
 /Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/security/b13c5e12b488c6e5438f2a2a647f1853ebebd4bf/deps.edn
-/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/kotoba-native/727ed95f866ade62064a540f7e78f246bd8a247d/deps.edn
+/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/kotoba-component/a9d4727821d84b4bef11fa6ff0a68bcc617cd3b8/deps.edn
+/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/kotoba-native/502f2921c7016b6c3772ca2ea0069b68e28d0b17/deps.edn
+/Users/junkawasaki/.gitlibs/libs/io.github.kotoba-lang/kotoba-wasm/9f988676859d55d709a95b025d3f5a80b3743826/deps.edn
