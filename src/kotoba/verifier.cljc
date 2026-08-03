@@ -53,6 +53,19 @@
 ;; admitted a non-literal or out-of-range count would therefore admit an
 ;; artifact whose code and whose sealed oracle value disagree.
 (def ^:private i64-operations '{bit-not 1 i64-shift-left 2 i64-shift-right 2 u64-shift-right 2})
+;; `kotoba.compiler.frontend/i32-operations`, independently re-derived like the
+;; sets above. `xorshift32` is absent on purpose: the frontend desugars it into
+;; a `let` over these, so it never survives into KIR.
+;;
+;; The shifts carry the same kind of operand restriction the i64 shifts do, one
+;; width down: the count must be an integer LITERAL in [0,31]. It is
+;; load-bearing for the same reason -- it is why the native backends may lower
+;; these onto CL / w1 without emitting a mask, since the hardware truncates the
+;; count mod 32 exactly where `kotoba.kir`'s `checked-shift32` traps.
+(def ^:private i32-operations
+  '{i32-wrap 1 u32-wrap 1 i32-wrapping-add 2 i32-wrapping-mul 2 i32-xor 2
+    i32-shift-left 2 i32-shift-right 2 u32-shift-right 2})
+(def ^:private i32-shifts '#{i32-shift-left i32-shift-right u32-shift-right})
 (def ^:private i64-shifts '#{i64-shift-left i64-shift-right u64-shift-right})
 (def ^:private comparisons '#{= < > <= >=})
 (def ^:private heap-operations '{pair 2 pair-first 1 pair-second 1})
@@ -310,6 +323,15 @@
           ;; `*` fold over any number of operands, the rest do not.
           (when (or (empty? args) (and (contains? '#{quot bit-xor bit-and bit-or} op) (not= 2 (count args))))
             (reject! "runtime KIR arithmetic arity rejected" {:operation op}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        (contains? i32-operations op)
+        (do
+          (when-not (= (get i32-operations op) (count args))
+            (reject! "runtime KIR i32 operation arity rejected" {:operation op}))
+          (when (and (contains? i32-shifts op)
+                     (not (and (integer? (second args)) (<= 0 (second args) 31))))
+            (reject! "runtime KIR i32 shift count rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
         (contains? i64-operations op)
