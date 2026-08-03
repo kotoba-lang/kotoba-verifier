@@ -77,7 +77,7 @@
 ;; backend restriction here would make this verifier ratify one target's
 ;; limits.
 (def ^:private string-operations
-  '{string-byte-length 1 string=? 2 string-concat 2 string-substring 3})
+  '{string-byte-length 1 string=? 2 string-concat 2 string-substring 3 string-code-point-at 2})
 (def ^:private tagged-i64-operations
   '{option-some 1 option-none 0 option-some? 1 option-value 2
     result-ok 1 result-err 1 result-ok? 1 result-value 2 result-error 2})
@@ -901,6 +901,7 @@
                             :string-equal-offset 112 :string-concat-offset 120
                             :typed-cap-call-offset 128
                             :string-substring-offset 136
+                            :string-code-point-at-offset 144
                             :string-pool-capacity 65536}]
       (when-not (= expected-fuel-abi fuel-abi)
         (reject! "fuel ABI is not admitted" {:target target :fuel-abi fuel-abi}))
