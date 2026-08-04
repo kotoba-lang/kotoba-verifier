@@ -50,7 +50,7 @@
                     :vector-count-offset 168 :vector-at-offset 176
                     :vector-assoc-offset 184 :vector-drop-offset 192
                     :vector-capacity 4096
-                    :vector-item-capacity 16384}
+                    :vector-item-capacity 65536}
       :effects (:effects program)
       :compatibility
       (compatibility/descriptor

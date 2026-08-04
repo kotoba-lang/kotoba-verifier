@@ -957,7 +957,7 @@
                             ;; many small vectors run out of entries first, one
                             ;; growing vector runs out of elements first.
                             :vector-capacity 4096
-                            :vector-item-capacity 16384}]
+                            :vector-item-capacity 65536}]
       (when-not (= expected-fuel-abi fuel-abi)
         (reject! "fuel ABI is not admitted" {:target target :fuel-abi fuel-abi}))
       (when-not (= expected-limits limits)
