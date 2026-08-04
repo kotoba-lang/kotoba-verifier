@@ -82,6 +82,28 @@
 (def ^:private tagged-i64-operations
   '{option-some 1 option-none 0 option-some? 1 option-value 2
     result-ok 1 result-err 1 result-ok? 1 result-value 2 result-error 2})
+;; `vector-i64` / `vector-f64` (ADR-2608030300). Admitted here as the
+;; target-independent operations they are, with their KIR arities -- the same
+;; stance `string-operations` above takes, and for the same reason: a backend
+;; that cannot emit one of these reports it as not implemented, which is
+;; accurate and fail-closed, whereas encoding a backend's limits here would
+;; make this verifier ratify one target's reach as if it were the contract.
+;;
+;; The two families are listed separately rather than folded together even
+;; though the native backends lower them to the same host calls. This
+;; verifier re-checks KIR, and in KIR they ARE two families with two element
+;; validations; collapsing them here would be re-deriving the emitter's
+;; simplification instead of the contract.
+(def ^:private vector-operations
+  '{vector-count 1 vector-get 3 vector-at 2 vector-drop 2
+    vector-assoc 3 vector-conj 2
+    vector-f64-count 1 vector-f64-get 3 vector-f64-at 2 vector-f64-drop 2
+    vector-f64-assoc 3 vector-f64-conj 2})
+;; `vector-new` is the one variadic operation in either family: its arity IS
+;; the literal's element count. Independently re-derived from
+;; `kotoba.kir.value/vector-item-limit`, like every other bound in this file.
+(def ^:private vector-constructors '#{vector-new vector-f64-new})
+(def ^:private max-vector-literal-items 16384)
 (def ^:private xml-operations
   '{xml-path-count 2 xml-name-count 2 xml-name-text 3 xml-path-text 3 xml-path-attr 4})
 (def ^:private decimal-operations '{decimal-f64-parse 1 decimal-f64x3-parse 1})
@@ -603,6 +625,20 @@
           (doseq [arg args]
             (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
+        (contains? vector-operations op)
+        (do
+          (when-not (= (get vector-operations op) (count args))
+            (reject! "runtime KIR vector operation arity rejected" {:operation op}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        (contains? vector-constructors op)
+        (do
+          (when (> (count args) max-vector-literal-items)
+            (reject! "runtime KIR vector literal exceeds the item limit"
+                     {:operation op :items (count args)
+                      :limit max-vector-literal-items}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
         (contains? xml-operations op)
         (do
           (when-not (= (get xml-operations op) (count args))
@@ -895,7 +931,13 @@
           expected-limits {:memory-bytes 65536
                            :fuel 512
                            :stack-bytes 4096}
-          expected-context {:version 2 :fuel-offset 8 :allow-bitmap-offset 16
+          ;; Version 3 adds the vector table (offsets 152-192). The bump is
+          ;; load-bearing in one direction only, and that is the dangerous
+          ;; one: a v2 host has no slots there, so code compiled against v3
+          ;; that called them would jump through uninitialised memory. Every
+          ;; `checked_*` in the loader therefore refuses a context whose
+          ;; version is not exactly its own.
+          expected-context {:version 3 :fuel-offset 8 :allow-bitmap-offset 16
                             :allow-bitmap-bytes 32 :cap-call-offset 48
                             :pair-new-offset 56 :pair-first-offset 64
                             :pair-second-offset 72 :pair-capacity 4096
@@ -906,7 +948,16 @@
                             :typed-cap-call-offset 128
                             :string-substring-offset 136
                             :string-code-point-at-offset 144
-                            :string-pool-capacity 65536}]
+                            :string-pool-capacity 65536
+                            :vector-new-empty-offset 152 :vector-conj-offset 160
+                            :vector-count-offset 168 :vector-at-offset 176
+                            :vector-assoc-offset 184 :vector-drop-offset 192
+                            ;; Two capacities, because a vector table entry and
+                            ;; the elements it spans are separately exhaustible:
+                            ;; many small vectors run out of entries first, one
+                            ;; growing vector runs out of elements first.
+                            :vector-capacity 4096
+                            :vector-item-capacity 16384}]
       (when-not (= expected-fuel-abi fuel-abi)
         (reject! "fuel ABI is not admitted" {:target target :fuel-abi fuel-abi}))
       (when-not (= expected-limits limits)
