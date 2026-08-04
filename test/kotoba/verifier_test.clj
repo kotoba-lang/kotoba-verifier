@@ -34,7 +34,7 @@
       :kir-sha256 (artifact/sha256 program)
       :lowering :runtime-sysv-v1
       :fuel-abi {:mode :hidden-context-r9 :initial 512}
-      :context-abi {:version 2 :fuel-offset 8 :allow-bitmap-offset 16
+      :context-abi {:version 3 :fuel-offset 8 :allow-bitmap-offset 16
                     :allow-bitmap-bytes 32 :cap-call-offset 48
                     :pair-new-offset 56 :pair-first-offset 64
                     :pair-second-offset 72 :pair-capacity 4096
@@ -43,7 +43,14 @@
                     :kgraph-capacity 4096
                     :string-equal-offset 112 :string-concat-offset 120
                     :typed-cap-call-offset 128
-                    :string-pool-capacity 65536}
+                    :string-substring-offset 136
+                    :string-code-point-at-offset 144
+                    :string-pool-capacity 65536
+                    :vector-new-empty-offset 152 :vector-conj-offset 160
+                    :vector-count-offset 168 :vector-at-offset 176
+                    :vector-assoc-offset 184 :vector-drop-offset 192
+                    :vector-capacity 4096
+                    :vector-item-capacity 16384}
       :effects (:effects program)
       :compatibility
       (compatibility/descriptor
@@ -112,6 +119,66 @@
   (is (= :exports-vector (shape-condition (assoc ok-program :exports #{'main}))))
   (is (= :map (shape-condition "not a program"))
       "a non-map must fail the first condition rather than throw"))
+
+;; ---------------------------------------------------------------------------
+;; vector-i64 / vector-f64 (ADR-2608030300)
+;; ---------------------------------------------------------------------------
+
+(defn- verifies? [body]
+  (try (#'kotoba.verifier/verify-program!
+        (assoc-in ok-program [:functions 0 :body] body))
+       true
+       (catch clojure.lang.ExceptionInfo _ false)))
+
+(defn- rejection [body]
+  (try (#'kotoba.verifier/verify-program!
+        (assoc-in ok-program [:functions 0 :body] body))
+       nil
+       (catch clojure.lang.ExceptionInfo e (ex-message e))))
+
+(deftest both-vector-families-are-admitted-at-their-kir-arities
+  (doseq [body ['(vector-new)
+                '(vector-new 1 2 3)
+                '(vector-count (vector-new 1))
+                '(vector-at (vector-new 1) 0)
+                '(vector-get (vector-new 1) 0 7)
+                '(vector-assoc (vector-new 1) 0 2)
+                '(vector-conj (vector-new 1) 2)
+                '(vector-drop (vector-new 1) 1)
+                '(vector-f64-new)
+                '(vector-f64-count (vector-f64-new 1))
+                '(vector-f64-at (vector-f64-new 1) 0)
+                '(vector-f64-get (vector-f64-new 1) 0 7)
+                '(vector-f64-assoc (vector-f64-new 1) 0 2)
+                '(vector-f64-conj (vector-f64-new 1) 2)
+                '(vector-f64-drop (vector-f64-new 1) 1)]]
+    (testing (str body)
+      (is (verifies? body)))))
+
+;; The arity table is the point: an operation admitted at the wrong arity
+;; would reach a backend that reads an argument which is not there.
+(deftest a-wrong-vector-arity-is-rejected-and-says-which-operation
+  (doseq [body ['(vector-count)
+                '(vector-count (vector-new 1) 2)
+                '(vector-at (vector-new 1))
+                '(vector-get (vector-new 1) 0)
+                '(vector-assoc (vector-new 1) 0)
+                '(vector-conj (vector-new 1))
+                '(vector-drop (vector-new 1))
+                '(vector-f64-at (vector-f64-new 1))]]
+    (testing (str body)
+      (is (= "runtime KIR vector operation arity rejected" (rejection body))))))
+
+;; `vector-new` is the one variadic operation, so its bound is its element
+;; count rather than an arity. Checked here because nothing downstream would
+;; catch it: the native lowering expands one host call per element, so an
+;; unbounded literal is an unbounded expansion.
+(deftest a-vector-literal-past-the-item-limit-is-rejected
+  (is (verifies? (cons 'vector-new (repeat 16384 1))))
+  (is (= "runtime KIR vector literal exceeds the item limit"
+         (rejection (cons 'vector-new (repeat 16385 1)))))
+  (is (= "runtime KIR vector literal exceeds the item limit"
+         (rejection (cons 'vector-f64-new (repeat 16385 1))))))
 
 (deftest closure-parameter-refinement-is-checked
   (let [consumer {:name 'consume :params ['closure] :param-types [:i64]
