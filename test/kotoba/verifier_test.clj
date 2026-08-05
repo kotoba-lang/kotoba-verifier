@@ -380,3 +380,115 @@
           "as an entry result")
       (is (true? (ours? [:option :bool])) "wrapped in an option")
       (is (true? (ours? [:record :t/r [[:a :bool] [:b :i64]]])) "as a record field"))))
+
+;; ---------------------------------------------------------------------------
+;; A projection over a boxed record HANDLE (ADR 0004).
+;;
+;; A record that crosses a function boundary is boxed into a one-word pair
+;; chain. Reading a field back off that word is the same walk whether the word
+;; was projected on the spot or named by a `let` first, and whether the callee's
+;; result was declared expanded or by schema reference -- the backends do not
+;; distinguish any of it. This verifier did, and that is what these rows pin.
+
+(def ^:private rec '[:record :t/r [[:a :i64] [:b :i64]]])
+(def ^:private rec-ref '[:ref :t/r])
+(def ^:private other-rec '[:record :t/other [[:a :i64] [:b :i64]]])
+
+(defn- handle-program
+  "`ok-program` plus a `mk` declared to return RESULT, and a `main` whose body
+  is BODY. RESULT is the only thing that varies between the expanded and the
+  by-reference spelling, so nothing else can decide the outcome."
+  [result body]
+  (-> ok-program
+      (assoc-in [:functions 0 :body] body)
+      (update :functions conj
+              {:name 'mk :params [] :result result :effects #{}
+               :body (list 'record-new rec 4 9)})))
+
+(defn- handle-outcome
+  "nil when the program verifies, else the rejection message. Named rather than
+  a boolean so a row can never go green because some OTHER check refused the
+  input -- the hazard this whole area has."
+  [result body]
+  (try (#'kotoba.verifier/verify-program! (handle-program result body)) nil
+       (catch clojure.lang.ExceptionInfo e (ex-message e))))
+
+(deftest a-let-bound-boxed-handle-may-be-projected
+  ;; `(let [h (mk)] (record-get … h :b))` -- murakumo's `infer_plan_core`,
+  ;; `infer_schedule_core` and `task_plan_core` all read a multi-field result
+  ;; this way, and it was the last shape in those three with no native lowering.
+  ;;
+  ;; Both fields are exercised on purpose. A chain walked to the wrong depth
+  ;; still yields a plausible i64, so a row that only ever selected `:a` would
+  ;; pass even when the walk is wrong; this gate cannot see depth at all, but
+  ;; the rows it shares with kotoba-native's execution table can, and they are
+  ;; kept the same shape deliberately.
+  (doseq [result [rec rec-ref]
+          field [:a :b]]
+    (testing (str (pr-str result) " / " field)
+      (is (nil? (handle-outcome result (list 'let ['h '(mk)]
+                                             (list 'record-get rec 'h field))))))))
+
+(deftest a-handle-projected-straight-off-the-call-may-be-declared-by-reference
+  ;; The second shape, and the one that had nothing to do with `let`:
+  ;; `(record-get … (mk) :b)` where `mk`'s result is `[:ref :t/r]` was refused
+  ;; while the identical program with the result written inline was admitted.
+  ;; `record-schema-of` resolved the call and then demanded
+  ;; `native-scalar-record-type?`, which a reference is not.
+  (doseq [field [:a :b]]
+    (testing (str "expanded / " field)
+      (is (nil? (handle-outcome rec (list 'record-get rec '(mk) field)))))
+    (testing (str "by reference / " field)
+      (is (nil? (handle-outcome rec-ref (list 'record-get rec '(mk) field)))))))
+
+(deftest a-handle-projected-twice-at-different-depths-is-admitted
+  (doseq [result [rec rec-ref]]
+    (testing (pr-str result)
+      (is (nil? (handle-outcome
+                 result
+                 (list 'let ['h '(mk)]
+                       (list '- (list 'record-get rec 'h :a)
+                             (list 'record-get rec 'h :b)))))))))
+
+(deftest projecting-the-wrong-schema-through-a-handle-is-still-rejected
+  ;; The property that makes admitting a reference BY NAME sound rather than
+  ;; trusting. A reference carries no field list, so the name is the whole
+  ;; check: a result declared `[:ref :t/r]` may not be projected as `:t/other`,
+  ;; even though both records have the same arity and field names and would
+  ;; therefore walk to a valid-looking depth.
+  (doseq [[why body]
+          [["let-bound" (list 'let ['h '(mk)] (list 'record-get other-rec 'h :b))]
+           ["straight off the call" (list 'record-get other-rec '(mk) :b)]]]
+    (testing why
+      (is (= "runtime KIR record projection rejected"
+             (handle-outcome rec-ref body))
+          "a reference to :t/r projected as :t/other")
+      (is (= "runtime KIR record projection rejected"
+             (handle-outcome rec body))
+          "an expanded :t/r projected as :t/other"))))
+
+(deftest a-let-bound-non-record-is-still-not-projectable
+  ;; Widening which BINDINGS carry a schema must not make every binding
+  ;; projectable. A slot holding an ordinary i64 is one word too, and walking it
+  ;; as a pair chain would read the arena at an address that is really a number.
+  (is (= "runtime KIR record projection rejected"
+         (handle-outcome rec (list 'let ['h 7] (list 'record-get rec 'h :b)))))
+  ;; A call whose result is NOT a record is the same hazard by another route.
+  (is (= "runtime KIR record projection rejected"
+         (handle-outcome :i64 (list 'let ['h '(mk)] (list 'record-get rec 'h :b))))))
+
+(deftest a-flattened-record-forwarded-through-a-second-binding-is-still-rejected
+  ;; Deliberately NOT admitted: a `let`-bound `record-new` is flattened into one
+  ;; slot per field, so rebinding it is N slots being read as one word, which
+  ;; both backends refuse. This gate stays exactly as wide as the emitter it
+  ;; re-derives -- `binding-record-schema` resolves a `record-new` and a call,
+  ;; and deliberately not a bare symbol.
+  (is (= "runtime KIR record projection rejected"
+         (handle-outcome rec (list 'let ['r (list 'record-new rec 4 9) 'r2 'r]
+                                   (list 'record-get rec 'r2 :b))))))
+
+(deftest an-undeclared-field-is-still-rejected-through-a-handle
+  (doseq [result [rec rec-ref]]
+    (is (= "runtime KIR record projection rejected"
+           (handle-outcome result (list 'let ['h '(mk)]
+                                        (list 'record-get rec 'h :nope)))))))
