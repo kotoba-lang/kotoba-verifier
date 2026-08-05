@@ -844,13 +844,23 @@
 ;;
 ;; `:bool` RESULTS are unaffected -- `function-result-types` admits them, and the
 ;; caller checks that first -- as are `:bool` record fields and `[:option :bool]`.
+;;
+;; ⚠ BRANCH `agent/verifier-bool-boundary-widening`: this file admits `:bool`
+;; below, and MUST NOT be merged until the x86-64 defect described above is
+;; fixed in `kotoba-native` and the 17 ISA rows in ADR 0001 are re-run green on
+;; BOTH ISAs. The commentary above describes the state on `main`, where the
+;; guard is still present; it is left intact because it is the reason this
+;; branch is not merged, not a stale note.
 (defn- native-boundary-type? [type]
-  (and (not= :bool type)
-       (or (contains? native-word-field-types type)
-           (native-word-value-type? type)
-           (native-scalar-record-type? type)
-           (and (vector? type) (= 2 (count type)) (= :ref (first type))
-                (keyword? (second type)) (some? (namespace (second type)))))))
+  (or (contains? native-word-field-types type)
+      ;; `:bool` reaches admission through the first two clauses --
+      ;; `native-word-field-types` and `native-word-value-type?` have both
+      ;; listed it since each was written. The removed `(not= :bool type)`
+      ;; guard wrapping this `or` was the entire exclusion.
+      (native-word-value-type? type)
+      (native-scalar-record-type? type)
+      (and (vector? type) (= 2 (count type)) (= :ref (first type))
+           (keyword? (second type)) (some? (namespace (second type))))))
 
 ;; Each shape condition is named so a rejection can say which one failed. The
 ;; whole set used to be one `and` reporting `{}`, which meant the most common
