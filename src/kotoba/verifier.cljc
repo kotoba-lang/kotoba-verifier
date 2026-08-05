@@ -76,8 +76,32 @@
 ;; not implemented, which is accurate and fail-closed, whereas encoding a
 ;; backend restriction here would make this verifier ratify one target's
 ;; limits.
+;;
+;; `string-contains?` and `string-replace-all` are admitted on the same stance,
+;; and the stance is the whole reason they belong here rather than in a
+;; native-only table. They are target-independent operations: `kotoba-wasm`
+;; has been the semantic oracle for both since long before either had a native
+;; lowering, and `kotoba.kir/execute` runs them. What was missing was only a
+;; native EMISSION, and that landed in kotoba-native `5df4d85`
+;; (`kotoba.native.string-search`, its ADR 0002) as a source rewrite into the
+;; four string callbacks already listed above -- `string=?`, `string-concat`,
+;; `string-substring`, `string-code-point-at` -- so this verifier is not
+;; ratifying a new capability, only ceasing to refuse an operation whose
+;; contract it always had.
+;;
+;; The arities are the KIR arities, independently re-derived like every other
+;; entry in this file, and they are the shapes both backends dispatch on
+;; (`x86_64.cljc` 1189/1192, `aarch64.cljc` 988/991). A different arity has no
+;; lowering and is refused by the arity check this table drives.
+;;
+;; Measured 2026-08-05: this table is the SECOND of two gates that refused
+;; these operations before emission. `kotoba.kir/non-string-typed-ops` is the
+;; first, and opening either one alone unlocks nothing -- the lowering moved
+;; murakumo's shipped-core sweep by exactly zero until both landed. See ADR
+;; 0002 here, and `kotoba-kir` ADR 0222 for the other gate.
 (def ^:private string-operations
   '{string-byte-length 1 string=? 2 string-concat 2 string-substring 3 string-code-point-at 2
+    string-contains? 2 string-replace-all 3
     keyword-name 1 keyword-from-string 1})
 (def ^:private tagged-i64-operations
   '{option-some 1 option-none 0 option-some? 1 option-value 2
