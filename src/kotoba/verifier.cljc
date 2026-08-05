@@ -770,7 +770,9 @@
                       kernel-cli kernel-sti kernel-hlt kernel-pause
                       kernel-out-u8 kernel-out-u32
                       kernel-in-u8 kernel-in-u32
-                      kernel-read-msr kernel-write-msr} op)
+                      kernel-read-msr kernel-write-msr
+                      kernel-cpuid-eax kernel-cpuid-ebx
+                      kernel-cpuid-ecx kernel-cpuid-edx} op)
         (do
           ;; The port reads take ONE argument -- the port -- where the writes
           ;; take two. Verifying that independently of the frontend is the
@@ -780,11 +782,21 @@
           ;; consequence of getting it wrong is worse: the second operand of a
           ;; mis-arity'd `kernel-write-msr` is whatever happened to be in the
           ;; register, written into EFER or LSTAR.
+          ;;
+          ;; The `cpuid` four are arity 2 -- leaf AND subleaf. A one-argument
+          ;; one would leave `ecx` holding whatever the leaf expression left
+          ;; behind, which for the subleaf-sensitive leaves (0x0d, 0x1f) names
+          ;; a DIFFERENT query whose answer is still a plausible-looking
+          ;; 32-bit number. That is precisely the failure this independent
+          ;; table exists to catch: a wrong arity here does not crash, it
+          ;; returns the wrong machine's answer.
           (when-not (= ({'kernel-boot-info 0 'kernel-read-cr2 0 'kernel-read-cr3 0 'kernel-write-cr3 1
                          'kernel-invlpg 1 'kernel-cli 0 'kernel-sti 0 'kernel-hlt 0
                          'kernel-pause 0 'kernel-out-u8 2 'kernel-out-u32 2
                          'kernel-in-u8 1 'kernel-in-u32 1
-                         'kernel-read-msr 1 'kernel-write-msr 2} op)
+                         'kernel-read-msr 1 'kernel-write-msr 2
+                         'kernel-cpuid-eax 2 'kernel-cpuid-ebx 2
+                         'kernel-cpuid-ecx 2 'kernel-cpuid-edx 2} op)
                        (count args))
             (reject! "runtime KIR kernel privileged operation arity rejected"
                      {:operation op}))
@@ -1136,7 +1148,9 @@
                                                   kernel-cli kernel-sti kernel-hlt kernel-pause
                                                   kernel-out-u8 kernel-out-u32
                                                   kernel-in-u8 kernel-in-u32
-                                                  kernel-read-msr kernel-write-msr} (first %)))
+                                                  kernel-read-msr kernel-write-msr
+                                                  kernel-cpuid-eax kernel-cpuid-ebx
+                                                  kernel-cpuid-ecx kernel-cpuid-edx} (first %)))
                      (tree-seq coll? seq (:functions program))))
       (reject! "bounded kernel memory operation requires the aiueos kernel target"
                {:target target}))
@@ -1248,7 +1262,15 @@
                              kernel-cli kernel-sti kernel-hlt kernel-pause
                              kernel-out-u8 kernel-out-u32
                              kernel-in-u8 kernel-in-u32
-                             kernel-read-msr kernel-write-msr}
+                             kernel-read-msr kernel-write-msr
+                             ;; The `cpuid` four suppress the oracle here for
+                             ;; the same reason `kotoba.kir/lower` lists them:
+                             ;; their operands are literals at every real call
+                             ;; site, so an oracle has every structural reason
+                             ;; to try to evaluate them, and a machine property
+                             ;; is not a compile-time value.
+                             kernel-cpuid-eax kernel-cpuid-ebx
+                             kernel-cpuid-ecx kernel-cpuid-edx}
         kernel-native? (some #(and (seq? %) (contains? kernel-operations (first %)))
                              (tree-seq coll? seq (get-in kexe [:program :functions])))
         expected-value
