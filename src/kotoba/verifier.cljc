@@ -683,11 +683,17 @@
 
         (contains? '#{kernel-boot-info kernel-read-cr2 kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                       kernel-cli kernel-sti kernel-hlt kernel-pause
-                      kernel-out-u8 kernel-out-u32} op)
+                      kernel-out-u8 kernel-out-u32
+                      kernel-in-u8 kernel-in-u32} op)
         (do
+          ;; The port reads take ONE argument -- the port -- where the writes
+          ;; take two. Verifying that independently of the frontend is the
+          ;; whole point of this table: an emitter handed a two-argument
+          ;; `kernel-in-u8` would silently consume something else as the port.
           (when-not (= ({'kernel-boot-info 0 'kernel-read-cr2 0 'kernel-read-cr3 0 'kernel-write-cr3 1
                          'kernel-invlpg 1 'kernel-cli 0 'kernel-sti 0 'kernel-hlt 0
-                         'kernel-pause 0 'kernel-out-u8 2 'kernel-out-u32 2} op)
+                         'kernel-pause 0 'kernel-out-u8 2 'kernel-out-u32 2
+                         'kernel-in-u8 1 'kernel-in-u32 1} op)
                        (count args))
             (reject! "runtime KIR kernel privileged operation arity rejected"
                      {:operation op}))
@@ -1031,7 +1037,8 @@
                                                   kernel-boot-info kernel-read-cr2
                                                   kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                                                   kernel-cli kernel-sti kernel-hlt kernel-pause
-                                                  kernel-out-u8 kernel-out-u32} (first %)))
+                                                  kernel-out-u8 kernel-out-u32
+                                                  kernel-in-u8 kernel-in-u32} (first %)))
                      (tree-seq coll? seq (:functions program))))
       (reject! "bounded kernel memory operation requires the aiueos kernel target"
                {:target target}))
@@ -1141,7 +1148,8 @@
                              kernel-load-u32 kernel-store-u32
                              kernel-boot-info kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                              kernel-cli kernel-sti kernel-hlt kernel-pause
-                             kernel-out-u8 kernel-out-u32}
+                             kernel-out-u8 kernel-out-u32
+                             kernel-in-u8 kernel-in-u32}
         kernel-native? (some #(and (seq? %) (contains? kernel-operations (first %)))
                              (tree-seq coll? seq (get-in kexe [:program :functions])))
         expected-value
