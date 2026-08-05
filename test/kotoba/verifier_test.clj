@@ -3,6 +3,7 @@
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [kotoba.artifact.core :as artifact]
+            [kotoba.kir]
             [kotoba.kir.compatibility :as compatibility]
             [kotoba.kir.target :as target]
             [kotoba.native.x86-64 :as x86-64]
@@ -251,3 +252,54 @@
   (testing "a result type outside the pair is still rejected, and says so"
     (is (= :signature-result
            (shape-condition (assoc ok-program :signature {:params [] :result :string}))))))
+
+;; ---------------------------------------------------------------------------
+;; The deliberate `:bool` PARAMETER divergence from kotoba-kir (ADR 0001)
+;; ---------------------------------------------------------------------------
+
+;; This verifier re-derives the native boundary set from `kotoba.kir` ON PURPOSE
+;; rather than importing it (ADR 0063), so the two can and do differ. Being
+;; stricter is sound -- a verifier can only reject -- but a divergence nobody
+;; measures is indistinguishable from one nobody meant, and that is how a
+;; `:bool`-parameter module ended up passing `kotoba.kir`'s target selection
+;; only to be refused here as "runtime KIR function shape rejected".
+;;
+;; So the divergence is pinned rather than described. `kotoba.kir` admits a bare
+;; `:bool` PARAMETER as of kotoba-kir ADR 0221 (`8de6215`); this verifier does
+;; not, and ADR 0001 in this repo records why: on x86-64 the emitted code for a
+;; call whose argument is the literal `false` drops that argument and every one
+;; after it, because `kotoba.native.x86-64/emit-call` tests its argument list
+;; with `if-let`. Measured as real processes on both ISAs -- SIGILL/SIGSEGV on
+;; x86-64, correct on aarch64 -- so admitting the type here would ship a
+;; boundary that miscompiles rather than one that fails closed.
+;;
+;; This test is written to FAIL if either side moves: if `kotoba.kir` withdraws
+;; `:bool`, or if this predicate is widened without the ADR being revisited.
+;; The widening itself is ready on `agent/verifier-bool-boundary-widening`;
+;; landing it means flipping this test to agreement in the same commit.
+(deftest the-bool-parameter-divergence-from-kotoba-kir-is-deliberate
+  (let [kir-admits? (fn [type] (boolean (#'kotoba.kir/native-boundary-type? type {})))
+        ours? (fn [type] (boolean (#'kotoba.verifier/native-boundary-type? type)))]
+    (testing "every other boundary type agrees, so the divergence is exactly one type"
+      (doseq [type [:i64 :string :keyword
+                    [:option :bool] [:option :i64] [:result :bool :i64]
+                    [:record :t/r [[:a :bool] [:b :i64]]]
+                    :f64 :f32 :bytes :map :vector-i64 nil "bool"]]
+        (testing (pr-str type)
+          (is (= (kir-admits? type) (ours? type))
+              (str "kotoba.kir " (if (kir-admits? type) "admits" "refuses")
+                   " " (pr-str type) " and this verifier does not agree")))))
+    (testing "a bare :bool parameter is the one deliberate disagreement (ADR 0001)"
+      (is (true? (kir-admits? :bool))
+          "kotoba.kir ADR 0221 admits it; if this fails, kotoba-kir moved")
+      (is (false? (ours? :bool))
+          (str "this verifier withholds it until kotoba-native's x86-64 argument"
+               " emission stops dropping a literal `false` argument (ADR 0001)")))
+    ;; `:bool` is admitted in every position that is NOT a bare parameter, and
+    ;; always was. Held here so the ADR's scope cannot be misread as "native
+    ;; cannot carry a bool".
+    (testing ":bool is unaffected everywhere it already worked"
+      (is (nil? (shape-condition (assoc ok-program :signature {:params [] :result :bool})))
+          "as an entry result")
+      (is (true? (ours? [:option :bool])) "wrapped in an option")
+      (is (true? (ours? [:record :t/r [[:a :bool] [:b :i64]]])) "as a record field"))))
