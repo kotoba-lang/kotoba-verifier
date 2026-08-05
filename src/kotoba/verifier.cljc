@@ -129,6 +129,7 @@
 (def ^:private native-word-field-types #{:i64 :bool :string :keyword})
 
 (declare native-scalar-record-type?)
+(declare native-word-value-type?)
 
 (defn- native-scalar-record-type? [type]
   (and (vector? type) (= 3 (count type)) (= :record (first type))
@@ -140,6 +141,13 @@
                       ;; flatten it into the enclosing record's slots,
                       ;; recursively, so nothing gains a runtime representation.
                       (or (contains? native-word-field-types (second field))
+                          ;; An `[:option T]`/`[:result T E]` field already
+                          ;; travels as ONE word (the pair handle), so it fills a
+                          ;; single flattened slot exactly like the scalar field
+                          ;; types above and needs no representation the record
+                          ;; lowering lacks. Independently re-derived here rather
+                          ;; than imported, same as everything else in this ns.
+                          (native-word-value-type? (second field))
                           (native-scalar-record-type? (second field)))))
                (nth type 2))
        (= (count (nth type 2)) (count (distinct (map first (nth type 2)))))))
@@ -485,12 +493,23 @@
         ;; file's own "treat embedded KIR as hostile" posture for every
         ;; other op-family above.
         (= op 'record-get)
-        (let [[type value field] args]
+        (let [[type value field] args
+              declared (record-schema-of value locals)]
           (when-not (and (= 3 (count args))
                         (native-scalar-record-type? type)
                         (keyword? field)
                         (some #(= field (first %)) (nth type 2))
-                        (= type (record-schema-of value locals)))
+                        ;; The operand's schema must be the one being projected.
+                        ;; A parameter declared as `[:ref :ns/name]` carries only
+                        ;; the NAME here (the program has no schema table to
+                        ;; expand it with), so the identity is checked on that
+                        ;; name -- projecting a different schema through it is
+                        ;; still rejected, and `type` itself was already required
+                        ;; to be a well-formed record just above.
+                        (or (= type declared)
+                            (and (vector? declared) (= 2 (count declared))
+                                 (= :ref (first declared))
+                                 (= (second declared) (second type)))))
             (reject! "runtime KIR record projection rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts))
 
@@ -766,6 +785,41 @@
 ;; them. Nothing had a string-returning function before, so nothing caught it.
 (def ^:private function-result-types #{:i64 :bool :string})
 
+;; A type an INTERNAL function boundary may carry. Every admitted shape is one
+;; machine word, or is boxed into one: the scalar words, an `[:option T]`/
+;; `[:result T E]` pair handle, and a record -- which crosses boxed as the pair
+;; chain the backends have built since ADR 0062, in BOTH directions now, so a
+;; record parameter costs no representation a record result did not already.
+;;
+;; `[:ref :ns/name]` is admitted, because a signature is the one place it
+;; survives lowering and the verified `program` carries no schema table to
+;; resolve it against (`program` is `select-keys`-ed to `#{:format :entry
+;; :exports :signature :effects :functions}`, and that exact set is what
+;; `:kir-sha256` digests -- widening it would move the digest of every module
+;; that uses a schema reference, on every target, which is not this change's
+;; business).
+;;
+;; Admitting the NAME is not taking the record on trust. `record-schema-of`
+;; binds such a parameter to its reference, and `record-get`'s check then
+;; requires the projected schema to be a well-formed `native-scalar-record-type?`
+;; whose own name EQUALS that reference -- so projecting schema A through a
+;; parameter declared as a reference to B is still rejected, which is the
+;; property that matters. A reference that is never projected is simply an
+;; opaque word, which is sound because a word is all it can be.
+;; A bare `:bool` is excluded here as a PARAMETER type, matching
+;; `kotoba.kir/native-boundary-type?` and preserving this file's previous
+;; behaviour exactly (it admitted only `#{:i64 :string}`): the interpreter
+;; validates a `:bool` argument as an i64 word, so nothing has ever executed one.
+;; `:bool` RESULTS are unaffected -- `function-result-types` admits them, and the
+;; caller checks that first.
+(defn- native-boundary-type? [type]
+  (and (not= :bool type)
+       (or (contains? native-word-field-types type)
+           (native-word-value-type? type)
+           (native-scalar-record-type? type)
+           (and (vector? type) (= 2 (count type)) (= :ref (first type))
+                (keyword? (second type)) (some? (namespace (second type)))))))
+
 ;; Each shape condition is named so a rejection can say which one failed. The
 ;; whole set used to be one `and` reporting `{}`, which meant the most common
 ;; way to hit it -- an entry returning `:bool` -- surfaced as "module shape
@@ -775,15 +829,40 @@
   [[:map (fn [p] (map? p))]
    [:keys (fn [p] (= #{:format :entry :exports :signature :effects :functions} (set (keys p))))]
    [:format (fn [p] (contains? #{:kotoba.kir/v3 :kotoba.kir/v4} (:format p)))]
-   [:entry (fn [p] (= 'main (:entry p)))]
-   [:signature-params (fn [p] (= [] (:params (:signature p))))]
-   [:signature-result (fn [p] (contains? entry-result-types (:result (:signature p))))]
-   [:signature-keys (fn [p] (= #{:params :result} (set (keys (:signature p)))))]
+   ;; A module either has an entry -- `main`, zero-arity, host-readable result
+   ;; -- or it is a LIBRARY: no entry, no signature, and an export list that
+   ;; names what it offers instead. The library shape is not a weaker version of
+   ;; the entry shape; it is a different one, and each of its parts is checked
+   ;; as strictly. In particular an entryless module must still export something,
+   ;; so "no entry" can never silently mean "no callable surface at all".
+   [:entry (fn [p] (or (= 'main (:entry p))
+                       (and (nil? (:entry p)) (seq (:exports p)))))]
+   [:signature-params (fn [p] (or (nil? (:entry p)) (= [] (:params (:signature p)))))]
+   [:signature-result (fn [p] (or (nil? (:entry p))
+                                  (contains? entry-result-types (:result (:signature p)))))]
+   [:signature-keys (fn [p] (if (nil? (:entry p))
+                              (nil? (:signature p))
+                              (= #{:params :result} (set (keys (:signature p))))))]
    [:effects-set (fn [p] (set? (:effects p)))]
    [:effects-valid (fn [p] (every? valid-effect? (:effects p)))]
    [:functions-vector (fn [p] (vector? (:functions p)))]
    [:exports-vector (fn [p] (vector? (:exports p)))]
    [:function-count (fn [p] (<= 1 (count (:functions p)) max-functions))]])
+
+(defn- record-param-locals
+  "Parameter environment for verifying a body: a record-typed parameter carries
+  its declared schema -- expanded, or the `[:ref :ns/name]` naming it -- and
+  everything else carries nil, because a plain word has no schema."
+  [function]
+  (let [param-types (:param-types function)]
+    (into {}
+          (map-indexed (fn [i param]
+                         [param (let [t (nth param-types i nil)]
+                                  (when (or (native-scalar-record-type? t)
+                                            (and (vector? t) (= 2 (count t))
+                                                 (= :ref (first t)) (keyword? (second t))))
+                                    t))]))
+          (:params function))))
 
 (defn- valid-closure-param-indexes? [function]
   (if-not (contains? function :closure-param-indexes)
@@ -851,11 +930,11 @@
                                     ;; chain -- one word, built from the arena
                                     ;; primitives already contracted here.
                                     (or (contains? function-result-types (:result function))
-                                        (native-scalar-record-type? (:result function)))
+                                        (native-boundary-type? (:result function)))
                                     (or (not (contains? function :param-types))
                                         (and (vector? (:param-types function))
                                              (= (count (:param-types function)) (count (:params function)))
-                                             (every? #{:i64 :string} (:param-types function))))
+                                             (every? native-boundary-type? (:param-types function))))
                                     (valid-closure-param-indexes? function)
                                     (valid-i64-pair-chain-param-indexes? function)
                                     (valid-closure-result-refinement? function)
@@ -864,18 +943,35 @@
                        (reject! "runtime KIR function shape rejected" {:function (:name function)}))
                      [(:name function) (:params function)]))
               functions)]
-    (when-not (and (= (count functions) (count signatures)) (contains? signatures 'main)
-                   (empty? (get signatures 'main))
+    ;; Identity, in whichever of the two module shapes this is. Both require
+    ;; every function name to be distinct and every export to name a function
+    ;; that exists; only the entry shape additionally requires `main` to exist,
+    ;; be zero-arity, and be exported. The library shape requires a non-empty
+    ;; export list in its place -- checked here as well as in
+    ;; `module-shape-checks`, since this is where "an export names nothing" is
+    ;; caught and a library with no exports would otherwise verify vacuously.
+    (when-not (and (= (count functions) (count signatures))
                    (= (count (:exports program)) (count (distinct (:exports program))))
                    (every? #(contains? signatures %) (:exports program))
-                   (some #{'main} (:exports program)))
+                   (if (nil? (:entry program))
+                     (seq (:exports program))
+                     (and (contains? signatures 'main)
+                          (empty? (get signatures 'main))
+                          (some #{'main} (:exports program)))))
       (reject! "runtime KIR entry or function identity rejected" {}))
     (let [nodes (volatile! 0)
           direct
           (into {}
                 (map (fn [function]
                        (let [facts (volatile! {:effects #{} :calls #{}})]
-                         (verify-expr! (:body function) (zipmap (:params function) (repeat nil))
+                         ;; A record-typed parameter enters `locals` carrying its
+                         ;; declared schema, so `record-schema-of` resolves a
+                         ;; projection of it exactly as it resolves one of a
+                         ;; `let`-bound record -- and `record-get`'s check still
+                         ;; requires the projected schema to EQUAL the declared
+                         ;; one. Every other parameter stays nil, as before: a
+                         ;; plain word has no schema to carry.
+                         (verify-expr! (:body function) (record-param-locals function)
                                        signatures 0 nodes facts)
                          [(:name function) @facts])))
                 functions)
@@ -1017,7 +1113,13 @@
         kernel-native? (some #(and (seq? %) (contains? kernel-operations (first %)))
                              (tree-seq coll? seq (get-in kexe [:program :functions])))
         expected-value
-        (when (and (empty? effects) (not kernel-native?))
+        ;; The oracle re-executes the ENTRY and requires the sealed value to
+        ;; match. A library has no entry to execute, and `kotoba.kir/lower`
+        ;; correspondingly seals no value for one, so there is nothing to
+        ;; re-derive -- the check below then compares nil to nil, which is the
+        ;; honest result rather than a skipped assertion.
+        (when (and (empty? effects) (not kernel-native?)
+                   (some? (get-in kexe [:program :entry])))
           (try
             (ir/execute (:program kexe) (get-in kexe [:program :entry]) [])
             (catch #?(:clj Exception :cljs :default) error
