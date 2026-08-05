@@ -812,12 +812,44 @@
 ;; parameter declared as a reference to B is still rejected, which is the
 ;; property that matters. A reference that is never projected is simply an
 ;; opaque word, which is sound because a word is all it can be.
-;; A bare `:bool` is excluded here as a PARAMETER type, matching
-;; `kotoba.kir/native-boundary-type?` and preserving this file's previous
-;; behaviour exactly (it admitted only `#{:i64 :string}`): the interpreter
-;; validates a `:bool` argument as an i64 word, so nothing has ever executed one.
+;;
+;; A bare `:bool` is excluded here as a PARAMETER type. It no longer matches
+;; `kotoba.kir/native-boundary-type?`, which admits one as of kotoba-kir
+;; ADR 0221 -- this is a deliberate divergence, pinned by
+;; `the-bool-parameter-divergence-from-kotoba-kir-is-deliberate` and recorded in
+;; ADR 0001. Both halves of the reason this comment used to give were wrong, in
+;; opposite directions, and both matter:
+;;
+;; 1. "The interpreter validates a `:bool` argument as an i64 word." No. It
+;;    validates against the KIR's `:param-types` table, and the trap that was
+;;    cited comes from a module that carries NO such table -- `invoke-function`
+;;    defaults an absent one to `:i64` per parameter. That is the compiler's
+;;    format classification (`typed-values?` excludes `:bool` by name, so a
+;;    module whose ONLY typed feature is a `:bool` parameter is emitted as
+;;    `:kotoba.hir/v2` and loses its parameter types), and it is a gap this
+;;    predicate never gated anyway: the caller guards the parameter check with
+;;    `(contains? function :param-types)`. kotoba-kir ADR 0221 corrected this.
+;;
+;; 2. "Nothing has ever executed one", offered as the reason to withhold. The
+;;    conclusion survives; the evidence for it is now much stronger and much
+;;    worse. Executed 2026-08-05 as real x86-64 and aarch64 processes through
+;;    `compiler`'s shared ISA execution table: aarch64 is correct on all 17
+;;    rows, and x86-64 crashes (SIGILL/SIGSEGV) on every row whose bool argument
+;;    is written as the literal `false`. `kotoba.native.x86-64/emit-call` walks
+;;    its argument list with `(if-let [arg (first remaining)] ...)`, so an
+;;    argument whose KIR form IS `false` ends the loop and is never emitted --
+;;    along with every argument after it -- while the pop sequence still pops
+;;    the full arity. AArch64's `mapcat` has no truth test and is unaffected.
+;;
+;; So the type is withheld not because it cannot be represented -- it is a plain
+;; 0/1 word in both backends, exactly as stated everywhere else in this file --
+;; but because one backend currently miscompiles a call that carries one.
+;; Admitting it would replace a fail-closed rejection with a wrong binary, which
+;; is the one trade this verifier exists to refuse. See ADR 0001 for the row
+;; table, the byte-level evidence, and the branch carrying the ready widening.
+;;
 ;; `:bool` RESULTS are unaffected -- `function-result-types` admits them, and the
-;; caller checks that first.
+;; caller checks that first -- as are `:bool` record fields and `[:option :bool]`.
 (defn- native-boundary-type? [type]
   (and (not= :bool type)
        (or (contains? native-word-field-types type)
