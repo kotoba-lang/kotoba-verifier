@@ -6,9 +6,15 @@
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
          :git/sha "ba29522ece748d2f7ff420d2ba45b1126c94baf8"}
+        ;; f6f29e9 is the commit that stopped x86-64 dropping a call argument
+        ;; that is the literal `false` (its ADR 0003). This repo does not merely
+        ;; depend on that backend, it CALLS it -- `native-targets` above holds
+        ;; `x86-64/emit-program` -- so admitting a `:bool` parameter while
+        ;; pinned to a backend that miscompiles one would put the defect inside
+        ;; this repo's own closure. ADR 0003. Fast-forward from 470fd94.
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
-         :git/sha "470fd94122b5cbbb05d76040a926af65a079df09"}
+         :git/sha "f6f29e9ff682d227c9d0556f66fd6b274070a746"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}

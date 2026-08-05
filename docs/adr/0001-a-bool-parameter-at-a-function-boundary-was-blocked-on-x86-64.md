@@ -1,10 +1,17 @@
-# ADR 0001: A `:bool` parameter at a function boundary is blocked on x86-64
+# ADR 0001: A `:bool` parameter at a function boundary was blocked on x86-64
 
-Status: accepted
+Status: superseded by [ADR 0003](0003-a-bool-parameter-at-a-function-boundary-is-admitted.md)
 
-The decision recorded here is to **withhold** the widening, not to make it. The
-widening itself is written, tested and pushed, on the branch named below; it is
-not merged.
+**The hold this ADR records is over.** kotoba-native `f6f29e9` fixed the defect
+described below, the 17 rows were re-run against it as real processes — 17/17 on
+both ISAs — and the widening is merged. ADR 0003 carries the re-measurement.
+
+What survives here is the *diagnosis*: the row table, the byte-level evidence,
+and the reason a passing compile is not evidence that a binary runs. That
+reasoning is why the type was withheld for a cycle instead of being admitted on
+the strength of "native codegen produced an artifact", and it is the reason this
+repo re-derives the boundary set rather than importing kotoba-kir's answer.
+The row table below is the **pre-fix** measurement; do not quote it as current.
 
 ## Context
 
@@ -111,33 +118,37 @@ defect reachable**, which is the entire reason ADR 0221 required an execution
 proof before admitting a type, and the reason that requirement had to be
 honoured with emitted code rather than with a successful compile.
 
-## Decision
+## Decision (superseded 2026-08-05 by ADR 0003)
 
-`kotoba.verifier/native-boundary-type?` keeps its `(not= :bool type)` guard.
-The widening is held until `kotoba-native`'s x86-64 argument emission is fixed.
+*At the time:* `kotoba.verifier/native-boundary-type?` keeps its
+`(not= :bool type)` guard. The widening is held until `kotoba-native`'s x86-64
+argument emission is fixed.
 
-The verifier is now deliberately **stricter than `kotoba.kir`**, and that
-divergence is pinned by `the-bool-parameter-divergence-from-kotoba-kir-is-
-deliberate` in `kotoba.verifier-test`, which asserts that the two agree on
-every other boundary type and disagree on exactly `:bool`. It fails the moment
-either side moves, so the next person to widen this predicate finds this ADR
-rather than a crash.
+*Now:* the guard is removed and the divergence is closed. The gate that pinned
+the divergence has been flipped to pin the **agreement**
+(`the-native-boundary-set-agrees-with-kotoba-kirs`), and still fails if either
+side moves in either direction.
 
-Being stricter is sound in the only direction that matters — a verifier can
-only reject — but it is not free, and the cost is named: a `:bool`-parameter
-module now passes `kotoba.kir`'s target selection and is refused later here as
-"runtime KIR function shape rejected" instead of at target selection.
+The verifier was deliberately **stricter than `kotoba.kir`** for one cycle, and
+that divergence was pinned by a test asserting the two agreed on every other
+boundary type and disagreed on exactly `:bool`. Holding it in a gate rather than
+in prose is what made the hold survivable: the next agent found the ADR instead
+of a crash, and the flip was a one-line edit rather than an archaeology problem.
 
-The widening itself is written and green, on branch
-`agent/verifier-bool-boundary-widening`: the same one-guard removal, plus tests
-that admit `:bool` alone, alongside every other boundary type in both orders,
-wrapped in `[:option T]`/`[:result T E]`, and as a record field — with the
-negative half (`:f64`, `:f32`, `:bytes`, `:vector-i64`, `:map`, a malformed
-table) still refused, and with the `:closure-param-indexes` /
-`:i64-pair-chain-param-indexes` refinements still i64-only. All of it was
-falsified against the unmodified predicate first: 9 failures, every one on a
-`:bool` row. Merging that branch after the x86-64 fix, and re-running the ISA
-rows, is the whole of the remaining work.
+Being stricter was sound in the only direction that matters — a verifier can
+only reject — but it was not free, and the cost was named: for one cycle a
+`:bool`-parameter module passed `kotoba.kir`'s target selection and was refused
+later here as "runtime KIR function shape rejected" instead of at target
+selection. That cost is now gone.
+
+The widening was written and green on branch
+`agent/verifier-bool-boundary-widening`, and landed unchanged (cherry-picked, not
+rebased) as part of ADR 0003: the same one-guard removal, plus tests that admit
+`:bool` alone, alongside every other boundary type in both orders, wrapped in
+`[:option T]`/`[:result T E]`, and as a record field — with the negative half
+(`:f64`, `:f32`, `:bytes`, `:vector-i64`, `:map`, a malformed table) still
+refused, and with the `:closure-param-indexes` /
+`:i64-pair-chain-param-indexes` refinements still i64-only.
 
 ## Consequences
 
@@ -146,28 +157,26 @@ rows, is the whole of the remaining work.
 - The `kotoba-kir` dependency advances `a54916b` -> `8de6215`, which is required
   for the divergence test to see the widened predicate and is the correct
   current pin regardless.
-- The murakumo sweep quantifies what is being withheld. Measured over all 33
-  `kotoba/*_core.kotoba`, identically on both ISAs: **14/33** compile today,
-  **19/33** with the widening. The five unblocked are `connect_core`,
-  `dash_state_core`, `infer_waste_core`, `overlay_stream_core`, `report_core`.
-  Two more (`infer_schedule_core`, `task_plan_core`) stop failing on `:bool` and
-  start failing on `record-new is only supported as the direct operand of a
-  matching record-get`; `reconcile_plan_core` keeps failing on `:target` for a
-  second reason of its own. None of the five writes a literal `false` in
-  argument position — every `false` in them is in `if`-branch position — so the
-  defect would not have bitten them on day one. That is luck, not a property,
-  and it is not a reason to ship.
-- **Left open, named**: (1) the x86-64 `if-let` argument-emission defect, in
-  `kotoba-native`, not fixed here — another agent is working in that repo and
-  this one is out of scope for it; (2) the third `if-let` site (the typed
-  heap/cap-call argument loop, line 342) is unverified either way, since neither
-  of the reachable probes exercises it; (3) the untyped-encoding gap from ADR
-  0221 is unchanged and still pinned by that repo — a module whose only typed
-  feature is a `:bool` parameter is emitted as `:kotoba.hir/v2`, loses
-  `:param-types`, and traps in the interpreter as `{:trap
-  :value-type-mismatch :expected :i64}`; (4) the ISA rows are not committed to
-  `compiler` — they are reproduced verbatim in the table above and belong in
-  that repo when the widening lands.
+- The murakumo sweep quantified what was being withheld. Measured over all 33
+  `kotoba/*_core.kotoba`, identically on both ISAs: **14/33** compiled, **19/33**
+  with the widening. ⚠ **Those figures are stale and are not comparable to
+  ADR 0003's**, which measured 24/33 -> 30/33 against a later `kotoba-native`.
+  A bare `N/33` is meaningless without the backend SHA beside it; see ADR 0003.
+  The observation that mattered at the time survives: none of the unblocked
+  modules writes a literal `false` in argument position — every `false` in them
+  is in `if`-branch position — so the defect would not have bitten them on day
+  one. That is luck, not a property, and it was not a reason to ship.
+- **Left open at the time, resolved since**: (1) the x86-64 `if-let`
+  argument-emission defect was fixed in `kotoba-native` `f6f29e9`, which
+  collapsed all three copies of the walk into one `emit-pushed-arguments` keyed
+  on `(seq remaining)` — including (2) the third site (the typed heap/cap-call
+  loop), which that fix covered along with the other two.
+- **Left open, still**: the untyped-encoding gap from kotoba-kir ADR 0221 is
+  unchanged and still pinned by that repo — a module whose only typed feature is
+  a `:bool` parameter is emitted as `:kotoba.hir/v2`, loses `:param-types`, and
+  traps as `{:trap :value-type-mismatch :expected :i64}`. It is why every row in
+  the table carries a `:string` parameter alongside its boolean. The ISA rows
+  remain uncommitted to `compiler`, reproduced verbatim here and in ADR 0003.
 - **Not attempted**: making this verifier reject the specific crashing shape.
   The bug is in an emitter, the verifier has no business encoding one backend's
   defects, and a gate that admitted `:bool` except where an argument happens to

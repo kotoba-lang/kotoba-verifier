@@ -253,8 +253,88 @@
     (is (= :signature-result
            (shape-condition (assoc ok-program :signature {:params [] :result :string}))))))
 
+(defn- function-rejected?
+  "True when PROGRAM fails specifically the FUNCTION shape check. Named rather
+  than reusing `verifies?` because the whole hazard here is a test that goes
+  green while some OTHER check is what rejected -- or admitted -- the input.
+  Anything but the function-shape rejection is reported as a distinct value, so
+  a row can never pass by being refused for an unrelated reason."
+  [program]
+  (try (#'kotoba.verifier/verify-program! program) false
+       (catch clojure.lang.ExceptionInfo e
+         (if (= "runtime KIR function shape rejected" (ex-message e))
+           true
+           [:other (ex-message e)]))))
+
+(defn- with-param-types
+  "`ok-program` plus one helper function carrying PARAM-TYPES. Every other part
+  of the helper is deliberately boring -- an i64 result, no effects, a body that
+  is just the first parameter -- so the ONLY thing that can decide the outcome
+  is the parameter-type check."
+  [param-types]
+  (update ok-program :functions conj
+          {:name 'helper
+           :params (vec (map-indexed (fn [i _] (symbol (str "p" i))) param-types))
+           :param-types (vec param-types)
+           :result :i64 :effects #{}
+           :body (if (seq param-types) 'p0 0)}))
+
+(deftest a-bool-parameter-is-admitted-at-a-function-boundary
+  ;; This gate is admission only. What justifies it is EXECUTION: the 17 ISA
+  ;; rows in ADR 0003, run as real x86-64 and aarch64 processes against
+  ;; kotoba-native `f6f29e9`, 17/17 on both. Before that backend fix the same
+  ;; rows trapped on all 10 x86-64 rows whose bool argument is the literal
+  ;; `false` (ADR 0001), which is why this predicate was held for a cycle.
+  ;;
+  ;; Only the BARE-`:bool` rows below are gates for the guard removal. The
+  ;; wrapped and record-field rows are documentation: they reach admission by
+  ;; recursion through `native-word-value-type?` and passed before the change
+  ;; too. Measured by restoring the guard -- 8 assertions move, and those are
+  ;; the bare rows plus the kotoba-kir agreement flip.
+  (testing "alone"
+    (is (false? (function-rejected? (with-param-types [:bool])))))
+  (testing "alongside the other admitted boundary types, in both orders"
+    (doseq [types [[:string :bool] [:bool :string]
+                   [:i64 :bool] [:bool :i64]
+                   [:keyword :bool] [:bool :bool]]]
+      (testing (pr-str types)
+        (is (false? (function-rejected? (with-param-types types)))))))
+  (testing "wrapped, where `native-word-value-type?` already recursed into it"
+    (doseq [types [[[:option :bool]] [[:result :bool :i64]] [[:result :i64 :bool]]]]
+      (testing (pr-str types)
+        (is (false? (function-rejected? (with-param-types types)))))))
+  (testing "as a record field, which never depended on this predicate"
+    (is (false? (function-rejected?
+                 (with-param-types [[:record :t/r [[:a :bool] [:b :i64]]]])))))
+  ;; The negative half. Widening one type must not have widened the set: these
+  ;; are rejected before and after, and if any of them started passing the gate
+  ;; would have stopped being a gate.
+  (testing "types outside the one-word slice are still refused"
+    (doseq [types [[:f64] [:f32] [:bytes] [:vector-i64] [:map] ["bool"] [nil]]]
+      (testing (pr-str types)
+        (is (true? (function-rejected? (with-param-types types)))))))
+  (testing "a malformed parameter-type table is still refused"
+    (is (true? (function-rejected?
+                (assoc-in (with-param-types [:bool]) [:functions 1 :param-types]
+                          [:bool :bool])))
+        "the table must still match the parameter count")
+    (is (true? (function-rejected?
+                (assoc-in (with-param-types [:bool]) [:functions 1 :param-types]
+                          '(:bool))))
+        "the table must still be a vector")))
+
+(deftest a-bool-parameter-refinement-is-still-i64-only
+  ;; `:closure-param-indexes` / `:i64-pair-chain-param-indexes` name parameters
+  ;; that must be raw i64 words, and both check `param-types` themselves. A
+  ;; wider boundary type must not leak into them: a closure handle is not a
+  ;; boolean, and calling one that is would be a jump through a 0/1 word.
+  (let [program (with-param-types [:bool])]
+    (doseq [k [:closure-param-indexes :i64-pair-chain-param-indexes]]
+      (testing (name k)
+        (is (true? (function-rejected? (assoc-in program [:functions 1 k] [0]))))))))
+
 ;; ---------------------------------------------------------------------------
-;; The deliberate `:bool` PARAMETER divergence from kotoba-kir (ADR 0001)
+;; Agreement with kotoba-kir's independently derived boundary set (ADR 0003)
 ;; ---------------------------------------------------------------------------
 
 ;; This verifier re-derives the native boundary set from `kotoba.kir` ON PURPOSE
@@ -264,20 +344,17 @@
 ;; `:bool`-parameter module ended up passing `kotoba.kir`'s target selection
 ;; only to be refused here as "runtime KIR function shape rejected".
 ;;
-;; So the divergence is pinned rather than described. `kotoba.kir` admits a bare
-;; `:bool` PARAMETER as of kotoba-kir ADR 0221 (`8de6215`); this verifier does
-;; not, and ADR 0001 in this repo records why: on x86-64 the emitted code for a
-;; call whose argument is the literal `false` drops that argument and every one
-;; after it, because `kotoba.native.x86-64/emit-call` tests its argument list
-;; with `if-let`. Measured as real processes on both ISAs -- SIGILL/SIGSEGV on
-;; x86-64, correct on aarch64 -- so admitting the type here would ship a
-;; boundary that miscompiles rather than one that fails closed.
+;; That divergence is now CLOSED: both sides admit a bare `:bool` PARAMETER --
+;; `kotoba.kir` since its ADR 0221 (`8de6215`), this verifier since ADR 0003,
+;; once kotoba-native `f6f29e9` fixed the x86-64 argument walk that made the
+;; type unsafe to admit (ADR 0001). Re-derivation is still the point: the whole
+;; reason this repo could hold the type for a cycle is that it does not import
+;; kotoba-kir's answer.
 ;;
-;; This test is written to FAIL if either side moves: if `kotoba.kir` withdraws
-;; `:bool`, or if this predicate is widened without the ADR being revisited.
-;; The widening itself is ready on `agent/verifier-bool-boundary-widening`;
-;; landing it means flipping this test to agreement in the same commit.
-(deftest the-bool-parameter-divergence-from-kotoba-kir-is-deliberate
+;; This test is written to FAIL if either side moves, in either direction, so
+;; the next person to change either predicate finds the ADRs rather than a
+;; miscompile.
+(deftest the-native-boundary-set-agrees-with-kotoba-kirs
   (let [kir-admits? (fn [type] (boolean (#'kotoba.kir/native-boundary-type? type {})))
         ours? (fn [type] (boolean (#'kotoba.verifier/native-boundary-type? type)))]
     (testing "every other boundary type agrees, so the divergence is exactly one type"
@@ -289,12 +366,12 @@
           (is (= (kir-admits? type) (ours? type))
               (str "kotoba.kir " (if (kir-admits? type) "admits" "refuses")
                    " " (pr-str type) " and this verifier does not agree")))))
-    (testing "a bare :bool parameter is the one deliberate disagreement (ADR 0001)"
-      (is (true? (kir-admits? :bool))
-          "kotoba.kir ADR 0221 admits it; if this fails, kotoba-kir moved")
-      (is (false? (ours? :bool))
-          (str "this verifier withholds it until kotoba-native's x86-64 argument"
-               " emission stops dropping a literal `false` argument (ADR 0001)")))
+    ;; On this branch the divergence is CLOSED: both sides admit `:bool`. On
+    ;; `main` this asserts the opposite, and ADR 0001 says why. Landing this
+    ;; branch means landing this flip in the same commit as the predicate.
+    (testing "a bare :bool parameter now agrees too"
+      (is (true? (kir-admits? :bool)))
+      (is (true? (ours? :bool))))
     ;; `:bool` is admitted in every position that is NOT a bare parameter, and
     ;; always was. Held here so the ADR's scope cannot be misread as "native
     ;; cannot carry a bool".

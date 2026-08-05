@@ -837,50 +837,56 @@
 ;; property that matters. A reference that is never projected is simply an
 ;; opaque word, which is sound because a word is all it can be.
 ;;
-;; A bare `:bool` is excluded here as a PARAMETER type. It no longer matches
-;; `kotoba.kir/native-boundary-type?`, which admits one as of kotoba-kir
-;; ADR 0221 -- this is a deliberate divergence, pinned by
-;; `the-bool-parameter-divergence-from-kotoba-kir-is-deliberate` and recorded in
-;; ADR 0001. Both halves of the reason this comment used to give were wrong, in
-;; opposite directions, and both matter:
+;; A bare `:bool` is admitted here as a PARAMETER type, matching
+;; `kotoba.kir/native-boundary-type?` (kotoba-kir ADR 0221). It was withheld for
+;; one release cycle, and the reason is worth keeping because it is the reason
+;; this predicate is re-derived here at all rather than deferred to kotoba-kir.
 ;;
-;; 1. "The interpreter validates a `:bool` argument as an i64 word." No. It
-;;    validates against the KIR's `:param-types` table, and the trap that was
-;;    cited comes from a module that carries NO such table -- `invoke-function`
-;;    defaults an absent one to `:i64` per parameter. That is the compiler's
-;;    format classification (`typed-values?` excludes `:bool` by name, so a
-;;    module whose ONLY typed feature is a `:bool` parameter is emitted as
-;;    `:kotoba.hir/v2` and loses its parameter types), and it is a gap this
-;;    predicate never gated anyway: the caller guards the parameter check with
-;;    `(contains? function :param-types)`. kotoba-kir ADR 0221 corrected this.
+;; Withheld (ADR 0001): admitting the type made a latent x86-64 defect
+;; REACHABLE. `kotoba.native.x86-64` walked a call's argument list with
+;; `(if-let [arg (first remaining)] ...)`, so an argument whose KIR form IS
+;; `false` ended the loop and was never emitted -- along with every argument
+;; after it -- while the pop sequence still popped the full arity. Measured as
+;; real processes: aarch64 correct on all 17 ISA rows, x86-64 SIGILL/SIGSEGV on
+;; all 10 rows whose bool argument is written as the literal `false`. AArch64's
+;; `mapcat` had no truth test and was unaffected. The type was never the
+;; problem -- `:bool` is a plain 0/1 word in both backends, exactly as stated
+;; everywhere else in this file -- a Clojure `false`-versus-`nil` conflation in
+;; an emitter loop was.
 ;;
-;; 2. "Nothing has ever executed one", offered as the reason to withhold. The
-;;    conclusion survives; the evidence for it is now much stronger and much
-;;    worse. Executed 2026-08-05 as real x86-64 and aarch64 processes through
-;;    `compiler`'s shared ISA execution table: aarch64 is correct on all 17
-;;    rows, and x86-64 crashes (SIGILL/SIGSEGV) on every row whose bool argument
-;;    is written as the literal `false`. `kotoba.native.x86-64/emit-call` walks
-;;    its argument list with `(if-let [arg (first remaining)] ...)`, so an
-;;    argument whose KIR form IS `false` ends the loop and is never emitted --
-;;    along with every argument after it -- while the pop sequence still pops
-;;    the full arity. AArch64's `mapcat` has no truth test and is unaffected.
+;; Admitted (ADR 0003): kotoba-native `f6f29e9` collapsed all three copies of
+;; that walk into one `emit-pushed-arguments` keyed on `(seq remaining)`. The
+;; same 17 rows were re-run against it as real x86-64 and aarch64 processes:
+;; 17/17 on BOTH ISAs, neither skipped. The rows were falsified against the
+;; pre-fix backend in the same session and reproduced all 10 original traps, so
+;; they are known to be capable of failing. `deps.edn` pins that backend, which
+;; matters here because this file CALLS it (`native-targets` holds
+;; `x86-64/emit-program`).
 ;;
-;; So the type is withheld not because it cannot be represented -- it is a plain
-;; 0/1 word in both backends, exactly as stated everywhere else in this file --
-;; but because one backend currently miscompiles a call that carries one.
-;; Admitting it would replace a fail-closed rejection with a wrong binary, which
-;; is the one trade this verifier exists to refuse. See ADR 0001 for the row
-;; table, the byte-level evidence, and the branch carrying the ready widening.
+;; One correction that outlived the hold: it is NOT true that "the interpreter
+;; validates a `:bool` argument as an i64 word". It validates against the KIR's
+;; `:param-types` table, and the trap once cited came from a module carrying no
+;; such table -- `invoke-function` defaults an absent one to `:i64` per
+;; parameter. That is the compiler's format classification (`typed-values?`
+;; excludes `:bool` by name, so a module whose ONLY typed feature is a `:bool`
+;; parameter is emitted as `:kotoba.hir/v2` and loses its parameter types). It
+;; is a real gap, it is kotoba-kir's, and this predicate never gated it: the
+;; caller guards the parameter check with `(contains? function :param-types)`.
 ;;
-;; `:bool` RESULTS are unaffected -- `function-result-types` admits them, and the
-;; caller checks that first -- as are `:bool` record fields and `[:option :bool]`.
+;; `:bool` RESULTS were never affected -- `function-result-types` admits them,
+;; and the caller checks that first -- nor were `:bool` record fields or
+;; `[:option :bool]`, which reach admission by recursion rather than through the
+;; removed guard.
 (defn- native-boundary-type? [type]
-  (and (not= :bool type)
-       (or (contains? native-word-field-types type)
-           (native-word-value-type? type)
-           (native-scalar-record-type? type)
-           (and (vector? type) (= 2 (count type)) (= :ref (first type))
-                (keyword? (second type)) (some? (namespace (second type)))))))
+  (or (contains? native-word-field-types type)
+      ;; `:bool` reaches admission through the first two clauses --
+      ;; `native-word-field-types` and `native-word-value-type?` have both
+      ;; listed it since each was written. The removed `(not= :bool type)`
+      ;; guard wrapping this `or` was the entire exclusion.
+      (native-word-value-type? type)
+      (native-scalar-record-type? type)
+      (and (vector? type) (= 2 (count type)) (= :ref (first type))
+           (keyword? (second type)) (some? (namespace (second type))))))
 
 ;; Each shape condition is named so a rejection can say which one failed. The
 ;; whole set used to be one `and` reporting `{}`, which meant the most common
