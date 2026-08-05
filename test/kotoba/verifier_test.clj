@@ -280,11 +280,17 @@
            :body (if (seq param-types) 'p0 0)}))
 
 (deftest a-bool-parameter-is-admitted-at-a-function-boundary
-  ;; ⚠ This gate is NOT landable on its own. `:bool` is admitted here only if
-  ;; the 17 ISA rows in ADR 0001 run green on BOTH ISAs -- as of 2026-08-05 they
-  ;; do not: x86-64 crashes on every row whose bool argument is the literal
-  ;; `false`, because `kotoba.native.x86-64/emit-call` walks its arguments with
-  ;; `if-let`. Re-run the rows before merging this branch.
+  ;; This gate is admission only. What justifies it is EXECUTION: the 17 ISA
+  ;; rows in ADR 0003, run as real x86-64 and aarch64 processes against
+  ;; kotoba-native `f6f29e9`, 17/17 on both. Before that backend fix the same
+  ;; rows trapped on all 10 x86-64 rows whose bool argument is the literal
+  ;; `false` (ADR 0001), which is why this predicate was held for a cycle.
+  ;;
+  ;; Only the BARE-`:bool` rows below are gates for the guard removal. The
+  ;; wrapped and record-field rows are documentation: they reach admission by
+  ;; recursion through `native-word-value-type?` and passed before the change
+  ;; too. Measured by restoring the guard -- 8 assertions move, and those are
+  ;; the bare rows plus the kotoba-kir agreement flip.
   (testing "alone"
     (is (false? (function-rejected? (with-param-types [:bool])))))
   (testing "alongside the other admitted boundary types, in both orders"
@@ -328,7 +334,7 @@
         (is (true? (function-rejected? (assoc-in program [:functions 1 k] [0]))))))))
 
 ;; ---------------------------------------------------------------------------
-;; Agreement with kotoba-kir's independently derived boundary set (ADR 0001)
+;; Agreement with kotoba-kir's independently derived boundary set (ADR 0003)
 ;; ---------------------------------------------------------------------------
 
 ;; This verifier re-derives the native boundary set from `kotoba.kir` ON PURPOSE
@@ -338,19 +344,16 @@
 ;; `:bool`-parameter module ended up passing `kotoba.kir`'s target selection
 ;; only to be refused here as "runtime KIR function shape rejected".
 ;;
-;; So the divergence is pinned rather than described. `kotoba.kir` admits a bare
-;; `:bool` PARAMETER as of kotoba-kir ADR 0221 (`8de6215`); this verifier does
-;; not, and ADR 0001 in this repo records why: on x86-64 the emitted code for a
-;; call whose argument is the literal `false` drops that argument and every one
-;; after it, because `kotoba.native.x86-64/emit-call` tests its argument list
-;; with `if-let`. Measured as real processes on both ISAs -- SIGILL/SIGSEGV on
-;; x86-64, correct on aarch64 -- so admitting the type here would ship a
-;; boundary that miscompiles rather than one that fails closed.
+;; That divergence is now CLOSED: both sides admit a bare `:bool` PARAMETER --
+;; `kotoba.kir` since its ADR 0221 (`8de6215`), this verifier since ADR 0003,
+;; once kotoba-native `f6f29e9` fixed the x86-64 argument walk that made the
+;; type unsafe to admit (ADR 0001). Re-derivation is still the point: the whole
+;; reason this repo could hold the type for a cycle is that it does not import
+;; kotoba-kir's answer.
 ;;
-;; This test is written to FAIL if either side moves: if `kotoba.kir` withdraws
-;; `:bool`, or if this predicate is widened without the ADR being revisited.
-;; The widening itself is ready on `agent/verifier-bool-boundary-widening`;
-;; landing it means flipping this test to agreement in the same commit.
+;; This test is written to FAIL if either side moves, in either direction, so
+;; the next person to change either predicate finds the ADRs rather than a
+;; miscompile.
 (deftest the-native-boundary-set-agrees-with-kotoba-kirs
   (let [kir-admits? (fn [type] (boolean (#'kotoba.kir/native-boundary-type? type {})))
         ours? (fn [type] (boolean (#'kotoba.verifier/native-boundary-type? type)))]
