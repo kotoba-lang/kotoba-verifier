@@ -330,6 +330,42 @@
 ;; across a call boundary. Bound once per program by `verify-program!`.
 (def ^:dynamic *call-results* {})
 
+;; `[:ref :ns/name]` -- a schema reference, which is the ONE spelling that
+;; survives lowering into a signature. `lower` expands references inside
+;; expressions but leaves signatures alone, because expanding one in a signature
+;; moved the `:kir-sha256` of every module that used a schema reference, on
+;; every target including its Wasm bytes. Re-derived here, exactly as
+;; `native-boundary-type?`'s own last clause spells it.
+(defn- record-reference? [type]
+  (and (vector? type) (= 2 (count type)) (= :ref (first type))
+       (keyword? (second type)) (some? (namespace (second type)))))
+
+;; The record schema a CALL denotes, or nil -- read off the callee's declared
+;; result.
+;;
+;; Both spellings are admitted, and the reference is returned AS the reference
+;; rather than resolved: the verified `program` carries no schema table to
+;; expand it with (`program` is `select-keys`-ed to the exact set `:kir-sha256`
+;; digests, and widening that set would move the digest of every module using a
+;; schema reference). `record-get`'s own check then requires the projected type
+;; to be a well-formed `native-scalar-record-type?` whose NAME equals the
+;; reference -- the same by-name discipline a record PARAMETER declared by
+;; reference has always been held to. Admitting the name is not taking the
+;; record on trust; projecting schema A through a result declared as a
+;; reference to B is still rejected.
+;;
+;; Before this, only `native-scalar-record-type?` was accepted, so a call
+;; declared `[:ref :t/r]` resolved to nil and every projection over it was
+;; refused -- while the identical program with the result written inline was
+;; admitted. The backends never distinguished the two spellings (kotoba-native
+;; pins that with `a-result-declared-by-schema-reference-boxes-identically`);
+;; only this resolver did.
+(defn- call-record-schema [form]
+  (when (and (seq? form) (simple-symbol? (first form))
+             (contains? *call-results* (first form)))
+    (let [r (get *call-results* (first form))]
+      (when (or (native-scalar-record-type? r) (record-reference? r)) r))))
+
 ;; The record schema a form denotes, or nil. Three shapes reach here: a direct
 ;; `record-new`, a local bound to one, and -- once a record field may itself be
 ;; a record -- a `record-get` selecting such a field, whose schema is read off
@@ -343,14 +379,32 @@
     (symbol? form) (get locals form)
     ;; A call whose declared result is a record: the operand arrived boxed.
     (and (seq? form) (simple-symbol? (first form)) (contains? *call-results* (first form)))
-    (let [r (get *call-results* (first form))]
-      (when (native-scalar-record-type? r) r))
+    (call-record-schema form)
     (and (seq? form) (= 'record-get (first form)) (= 4 (count form)))
     (let [[_ type value field] form]
       (when (= type (record-schema-of value locals))
         (let [field-type (second (first (filter #(= field (first %)) (nth type 2))))]
           (when (native-scalar-record-type? field-type) field-type))))
     :else nil))
+
+;; The record schema a LET BINDING's value denotes, or nil.
+;;
+;; Two shapes, and deliberately only two. A directly-nested `record-new`, which
+;; is FLATTENED into one slot per field by the backends. And a CALL whose
+;; declared result is a record, which arrives as the one-word pair-chain handle
+;; a record result has crossed on since kotoba-native ADR 0062 --
+;; `(let [ends (partition-3-ends x)] (record-get … ends :hi0))`, which is how
+;; murakumo's plan and schedule cores read a multi-field result, and the last
+;; shape in those cores with no native lowering.
+;;
+;; NOT the general `record-schema-of`. That also resolves a bare SYMBOL, so
+;; using it here would admit `(let [r (record-new …) r2 r] (record-get … r2 :b))`
+;; -- and a flattened record forwarded through a second binding is N slots being
+;; read as one word, which the backends refuse. Rejecting it here keeps this
+;; gate no wider than the emitter it re-derives; the two must agree about the
+;; shape, not merely both be "narrow".
+(defn- binding-record-schema [value]
+  (or (record-new-schema value) (call-record-schema value)))
 
 (defn- verify-bindings! [bindings locals signatures depth nodes facts]
   (when-not (and (vector? bindings) (even? (count bindings))
@@ -365,7 +419,7 @@
         (when-not (valid-name? name)
           (reject! "runtime KIR local name rejected" {:name name}))
         (verify-expr! value env signatures (inc depth) nodes facts)
-        (recur (next pairs) (assoc env name (record-new-schema value))))
+        (recur (next pairs) (assoc env name (binding-record-schema value))))
       env)))
 
 (defn- verify-expr! [form locals signatures depth nodes facts]
@@ -509,13 +563,20 @@
           (doseq [arg values] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
         ;; The codegen backends (`emit-record-get-of-new` in both
-        ;; `backend/x86-64.cljc` and `backend/aarch64.cljc`) require `value`
-        ;; to be a directly-nested, same-schema `record-new` -- this
-        ;; independent re-check enforces the EXACT same narrow shape (rather
-        ;; than relying solely on `verify-runtime!`'s `(emit program)`
-        ;; re-invocation to fail closed on anything looser), matching this
-        ;; file's own "treat embedded KIR as hostile" posture for every
-        ;; other op-family above.
+        ;; `kotoba.native.x86-64` and `kotoba.native.aarch64`) admit `value` in
+        ;; exactly four shapes: a directly-nested same-schema `record-new`, a
+        ;; local FLATTENED into one slot per field, a PARAMETER, and -- since
+        ;; kotoba-native ADR 0004 -- a one-word boxed HANDLE, whether it came
+        ;; straight from a call or was named by a `let` first. This independent
+        ;; re-check enforces the same set (rather than relying solely on
+        ;; `verify-runtime!`'s `(emit program)` re-invocation to fail closed on
+        ;; anything looser), matching this file's own "treat embedded KIR as
+        ;; hostile" posture for every other op-family above.
+        ;;
+        ;; The operand's schema comes from `record-schema-of`; what makes the
+        ;; handle cases safe is the identity check below, not the shape --
+        ;; whichever route the word arrived by, the projected `type` must be a
+        ;; well-formed record that IS the one the operand was declared with.
         (= op 'record-get)
         (let [[type value field] args
               declared (record-schema-of value locals)]
