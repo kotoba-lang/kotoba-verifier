@@ -769,16 +769,22 @@
         (contains? '#{kernel-boot-info kernel-read-cr2 kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                       kernel-cli kernel-sti kernel-hlt kernel-pause
                       kernel-out-u8 kernel-out-u32
-                      kernel-in-u8 kernel-in-u32} op)
+                      kernel-in-u8 kernel-in-u32
+                      kernel-read-msr kernel-write-msr} op)
         (do
           ;; The port reads take ONE argument -- the port -- where the writes
           ;; take two. Verifying that independently of the frontend is the
           ;; whole point of this table: an emitter handed a two-argument
           ;; `kernel-in-u8` would silently consume something else as the port.
+          ;; The MSR pair splits the same way (index / index+value), and the
+          ;; consequence of getting it wrong is worse: the second operand of a
+          ;; mis-arity'd `kernel-write-msr` is whatever happened to be in the
+          ;; register, written into EFER or LSTAR.
           (when-not (= ({'kernel-boot-info 0 'kernel-read-cr2 0 'kernel-read-cr3 0 'kernel-write-cr3 1
                          'kernel-invlpg 1 'kernel-cli 0 'kernel-sti 0 'kernel-hlt 0
                          'kernel-pause 0 'kernel-out-u8 2 'kernel-out-u32 2
-                         'kernel-in-u8 1 'kernel-in-u32 1} op)
+                         'kernel-in-u8 1 'kernel-in-u32 1
+                         'kernel-read-msr 1 'kernel-write-msr 2} op)
                        (count args))
             (reject! "runtime KIR kernel privileged operation arity rejected"
                      {:operation op}))
@@ -1129,7 +1135,8 @@
                                                   kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                                                   kernel-cli kernel-sti kernel-hlt kernel-pause
                                                   kernel-out-u8 kernel-out-u32
-                                                  kernel-in-u8 kernel-in-u32} (first %)))
+                                                  kernel-in-u8 kernel-in-u32
+                                                  kernel-read-msr kernel-write-msr} (first %)))
                      (tree-seq coll? seq (:functions program))))
       (reject! "bounded kernel memory operation requires the aiueos kernel target"
                {:target target}))
@@ -1240,7 +1247,8 @@
                              kernel-boot-info kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                              kernel-cli kernel-sti kernel-hlt kernel-pause
                              kernel-out-u8 kernel-out-u32
-                             kernel-in-u8 kernel-in-u32}
+                             kernel-in-u8 kernel-in-u32
+                             kernel-read-msr kernel-write-msr}
         kernel-native? (some #(and (seq? %) (contains? kernel-operations (first %)))
                              (tree-seq coll? seq (get-in kexe [:program :functions])))
         expected-value
