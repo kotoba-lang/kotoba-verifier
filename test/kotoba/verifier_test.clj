@@ -22,7 +22,9 @@
 (defn- vector-fixture []
   (edn/read-string (slurp (io/resource "conformance/dual-surface-v1.edn"))))
 
-(defn- native-artifact [kir]
+(defn- native-artifact
+  ([kir] (native-artifact kir 512))
+  ([kir fuel]
   (let [program (select-keys kir [:format :entry :exports :signature
                                   :effects :functions])
         emitted (x86-64/emit-program program)
@@ -34,7 +36,7 @@
       :value nil
       :kir-sha256 (artifact/sha256 program)
       :lowering :runtime-sysv-v1
-      :fuel-abi {:mode :hidden-context-r9 :initial 512}
+      :fuel-abi {:mode :hidden-context-r9 :initial fuel}
       :context-abi {:version 3 :fuel-offset 8 :allow-bitmap-offset 16
                     :allow-bitmap-bytes 32 :cap-call-offset 48
                     :pair-new-offset 56 :pair-first-offset 64
@@ -58,10 +60,32 @@
        {:hir-format :kotoba.hir/v3 :kir-format :kotoba.kir/v4
         :target :x86_64-kotoba-v1 :target-profile profile
         :value-abi :kotoba.typed/externref-v1})
-      :limits {:memory-bytes 65536 :fuel 512 :stack-bytes 4096}
+      :limits {:memory-bytes 65536 :fuel fuel :stack-bytes 4096}
       :code (mapv #(bit-and (int %) 0xff) (:code emitted))
       :program program
-      :exports (:exports emitted)})))
+      :exports (:exports emitted)}))))
+
+(deftest bounded-native-fuel-is-an-explicit-matched-artifact-contract
+  (let [{:keys [kir]} (vector-fixture)
+        raised (native-artifact kir 65536)]
+    (is (= raised (kotoba.verifier/verify-artifact! raised)))
+    (doseq [[label changed message]
+            [[:mismatch
+              (artifact/seal (assoc-in raised [:fuel-abi :initial] 65535))
+              #"fuel ABI is not admitted"]
+             [:zero
+              (artifact/seal (-> raised
+                                 (assoc-in [:fuel-abi :initial] 0)
+                                 (assoc-in [:limits :fuel] 0)))
+              #"native fuel budget is not admitted"]
+             [:over-maximum
+              (artifact/seal (-> raised
+                                 (assoc-in [:fuel-abi :initial] 1048577)
+                                 (assoc-in [:limits :fuel] 1048577)))
+              #"native fuel budget is not admitted"]]]
+      (testing (name label)
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo message
+                              (kotoba.verifier/verify-artifact! changed)))))))
 
 (deftest checked-in-vector-proves-both-surfaces-preserve-one-kir-contract
   (let [{:keys [kir admission expected]} (vector-fixture)
