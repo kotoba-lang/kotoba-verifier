@@ -26,6 +26,13 @@
   #{:format :target :target-profile :value :kir-sha256 :lowering :fuel-abi :context-abi
     :effects :limits :code :program :exports :compatibility :sha256})
 
+(def ^:private max-native-fuel 1048576)
+
+(defn- admitted-native-fuel? [fuel]
+  (and #?(:clj (integer? fuel)
+          :cljs (or (i64/bigint-value? fuel) (integer? fuel)))
+       (<= 1 fuel max-native-fuel)))
+
 (def max-functions 1024)
 (def max-expression-nodes 50000)
 (def max-lowered-nodes 100000)
@@ -1172,11 +1179,15 @@
         (reject! "native export table rejected" {:target target}))
       (when-not (= (:code expected) code)
         (reject! "native instruction stream rejected" {:target target})))
-    (let [expected-fuel-abi (case backend
-                              :x86_64-kotoba-v1 {:mode :hidden-context-r9 :initial 512}
-                              :aarch64-kotoba-v1 {:mode :hidden-context-x7 :initial 512})
+    (let [fuel (:fuel limits)
+          _ (when-not (admitted-native-fuel? fuel)
+              (reject! "native fuel budget is not admitted"
+                       {:target target :fuel fuel :maximum max-native-fuel}))
+          expected-fuel-abi (case backend
+                              :x86_64-kotoba-v1 {:mode :hidden-context-r9 :initial fuel}
+                              :aarch64-kotoba-v1 {:mode :hidden-context-x7 :initial fuel})
           expected-limits {:memory-bytes 65536
-                           :fuel 512
+                           :fuel fuel
                            :stack-bytes 4096}
           ;; Version 3 adds the vector table (offsets 152-192). The bump is
           ;; load-bearing in one direction only, and that is the dangerous
@@ -1282,7 +1293,8 @@
         (when (and (empty? effects) (not kernel-native?)
                    (some? (get-in kexe [:program :entry])))
           (try
-            (ir/execute (:program kexe) (get-in kexe [:program :entry]) [])
+            (ir/execute (:program kexe) (get-in kexe [:program :entry]) []
+                        {:fuel (get-in kexe [:limits :fuel])})
             (catch #?(:clj Exception :cljs :default) error
               (reject! "native artifact oracle evaluation rejected"
                        {:cause (ex-message error)}))))]
