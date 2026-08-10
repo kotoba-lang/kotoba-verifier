@@ -334,7 +334,7 @@
   ;; are rejected before and after, and if any of them started passing the gate
   ;; would have stopped being a gate.
   (testing "types outside the one-word slice are still refused"
-    (doseq [types [[:f64] [:f32] [:bytes] [:vector-i64] [:map] ["bool"] [nil]]]
+    (doseq [types [[:f64] [:f32] [:bytes] [:map] ["bool"] [nil]]]
       (testing (pr-str types)
         (is (true? (function-rejected? (with-param-types types)))))))
   (testing "a malformed parameter-type table is still refused"
@@ -346,6 +346,49 @@
                 (assoc-in (with-param-types [:bool]) [:functions 1 :param-types]
                           '(:bool))))
         "the table must still be a vector")))
+
+(deftest native-vector-handles-are-private-function-boundaries-only
+  (doseq [vector-type [:vector-i64 :vector-f64]]
+    (testing (name vector-type)
+      (let [private-helper (-> (with-param-types [vector-type])
+                               (assoc-in [:functions 1 :result] vector-type))]
+        (is (false? (function-rejected? private-helper))
+            "a private native call carries the context-owned handle as one word")
+        (is (true? (function-rejected?
+                    (update private-helper :exports conj 'helper)))
+            "a kexe export cannot accept or return an unmarshalable handle")))))
+
+(deftest native-string-index-is-private-and-its-operations-are-sealed
+  (let [private-helper (-> (with-param-types [:string-index])
+                           (assoc-in [:functions 1 :result] :string-index))]
+    (is (false? (function-rejected? private-helper)))
+    (is (true? (function-rejected?
+                (update private-helper :exports conj 'helper)))))
+  (doseq [form ['(string-index-new)
+                '(string-index-count (string-index-new))
+                '(string-index-contains (string-index-new) "cid")
+                '(string-index-get (string-index-new) "cid")
+                '(string-index-assoc (string-index-new) "cid" 7)]]
+    (is (verifies? form) (pr-str form)))
+  (doseq [form ['(string-index-new 1)
+                '(string-index-count)
+                '(string-index-contains index)
+                '(string-index-get index key extra)
+                '(string-index-assoc index key)]]
+    (is (= "runtime KIR string-index operation arity rejected"
+           (rejection form))
+        (pr-str form))))
+
+(deftest a-sealed-native-artifact-reemits-string-index-without-a-new-abi
+  (let [program (-> ok-program
+                    (assoc :format :kotoba.kir/v4)
+                    (assoc-in [:functions 0 :body]
+                              '(string-index-count
+                                (string-index-assoc
+                                 (string-index-new) "cid" 7))))
+        artifact (artifact/seal (assoc (native-artifact program) :value 1))]
+    (is (= 3 (get-in artifact [:context-abi :version])))
+    (is (= artifact (kotoba.verifier/verify-artifact! artifact)))))
 
 (deftest a-bool-parameter-refinement-is-still-i64-only
   ;; `:closure-param-indexes` / `:i64-pair-chain-param-indexes` name parameters
