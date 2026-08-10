@@ -135,6 +135,11 @@
 ;; `kotoba.kir.value/vector-item-limit`, like every other bound in this file.
 (def ^:private vector-constructors '#{vector-new vector-f64-new})
 (def ^:private max-vector-literal-items 16384)
+(def ^:private string-index-operations
+  '{string-index-new 0 string-index-count 1 string-index-contains 2
+    string-index-get 2 string-index-assoc 3})
+(def ^:private max-string-index-items 128)
+(def ^:private max-string-index-key-bytes 65536)
 (def ^:private xml-operations
   '{xml-path-count 2 xml-name-count 2 xml-name-text 3 xml-path-text 3 xml-path-attr 4})
 (def ^:private decimal-operations '{decimal-f64-parse 1 decimal-f64x3-parse 1})
@@ -750,6 +755,19 @@
                       :limit max-vector-literal-items}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
+        (contains? string-index-operations op)
+        (do
+          (when-not (= (get string-index-operations op) (count args))
+            (reject! "runtime KIR string-index operation arity rejected"
+                     {:operation op}))
+          ;; Independently re-derived from the language contract. These
+          ;; constants intentionally do not import compiler/emitter code.
+          (when-not (and (= 128 max-string-index-items)
+                         (= 65536 max-string-index-key-bytes))
+            (reject! "runtime KIR string-index limits rejected" {}))
+          (doseq [arg args]
+            (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
         (contains? xml-operations op)
         (do
           (when-not (= (get xml-operations op) (count args))
@@ -974,6 +992,16 @@
       (and (vector? type) (= 2 (count type)) (= :ref (first type))
            (keyword? (second type)) (some? (namespace (second type))))))
 
+(defn- native-private-handle-type? [type]
+  ;; The native context owns these handles. Machine code can forward one
+  ;; between private functions as a single word, but the public kexe ABI has
+  ;; no operation for a host to construct, validate, inspect, or release one.
+  (contains? #{:vector-i64 :vector-f64 :string-index} type))
+
+(defn- native-function-boundary-type? [type exported?]
+  (or (native-boundary-type? type)
+      (and (not exported?) (native-private-handle-type? type))))
+
 ;; Each shape condition is named so a rejection can say which one failed. The
 ;; whole set used to be one `and` reporting `{}`, which meant the most common
 ;; way to hit it -- an entry returning `:bool` -- surfaced as "module shape
@@ -1060,43 +1088,51 @@
     (when-not (try (boolean (check program)) (catch #?(:clj Throwable :cljs :default) _ false))
       (reject! "runtime KIR module shape rejected" {:condition label})))
   (binding [*call-results* (into {} (map (juxt :name :result) (:functions program)))]
-   (let [functions (:functions program)
-        signatures
-        (into {}
-              (map (fn [function]
-                     (when-not (and (map? function)
-                                    (let [keys* (set (keys function))
-                                          required #{:name :params :result :effects :body}
-                                          admitted (conj required :param-types
-                                                         :closure-param-indexes
-                                                         :i64-pair-chain-param-indexes
-                                                         :closure-result?)]
-                                      (and (set/subset? required keys*)
-                                           (set/subset? keys* admitted)))
-                                    (valid-name? (:name function))
-                                    (vector? (:params function))
-                                    (<= (count (:params function)) max-parameters)
-                                    (every? valid-name? (:params function))
-                                    (= (count (:params function))
-                                       (count (distinct (:params function))))
-                                    ;; A function may also return a RECORD, which
-                                    ;; crosses the boundary boxed as a pair
-                                    ;; chain -- one word, built from the arena
-                                    ;; primitives already contracted here.
-                                    (or (contains? function-result-types (:result function))
-                                        (native-boundary-type? (:result function)))
-                                    (or (not (contains? function :param-types))
-                                        (and (vector? (:param-types function))
-                                             (= (count (:param-types function)) (count (:params function)))
-                                             (every? native-boundary-type? (:param-types function))))
-                                    (valid-closure-param-indexes? function)
-                                    (valid-i64-pair-chain-param-indexes? function)
-                                    (valid-closure-result-refinement? function)
-                                    (set? (:effects function))
-                                    (every? valid-effect? (:effects function)))
-                       (reject! "runtime KIR function shape rejected" {:function (:name function)}))
-                     [(:name function) (:params function)]))
-              functions)]
+    (let [functions (:functions program)
+          exports (set (:exports program))
+          signatures
+          (into {}
+                (map (fn [function]
+                       (let [exported? (contains? exports (:name function))]
+                         (when-not
+                          (and (map? function)
+                               (let [keys* (set (keys function))
+                                     required #{:name :params :result :effects :body}
+                                     admitted (conj required :param-types
+                                                    :closure-param-indexes
+                                                    :i64-pair-chain-param-indexes
+                                                    :closure-result?)]
+                                 (and (set/subset? required keys*)
+                                      (set/subset? keys* admitted)))
+                               (valid-name? (:name function))
+                               (vector? (:params function))
+                               (<= (count (:params function)) max-parameters)
+                               (every? valid-name? (:params function))
+                               (= (count (:params function))
+                                  (count (distinct (:params function))))
+                               ;; A function may also return a RECORD, which
+                               ;; crosses the boundary boxed as a pair chain --
+                               ;; one word, built from the arena primitives
+                               ;; already contracted here.
+                               (or (contains? function-result-types (:result function))
+                                   (native-function-boundary-type?
+                                    (:result function) exported?))
+                               (or (not (contains? function :param-types))
+                                   (and (vector? (:param-types function))
+                                        (= (count (:param-types function))
+                                           (count (:params function)))
+                                        (every?
+                                         #(native-function-boundary-type? % exported?)
+                                         (:param-types function))))
+                               (valid-closure-param-indexes? function)
+                               (valid-i64-pair-chain-param-indexes? function)
+                               (valid-closure-result-refinement? function)
+                               (set? (:effects function))
+                               (every? valid-effect? (:effects function)))
+                           (reject! "runtime KIR function shape rejected"
+                                    {:function (:name function)}))
+                         [(:name function) (:params function)]))
+                     functions))]
     ;; Identity, in whichever of the two module shapes this is. Both require
     ;; every function name to be distinct and every export to name a function
     ;; that exists; only the entry shape additionally requires `main` to exist,
