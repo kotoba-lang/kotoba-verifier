@@ -18,6 +18,13 @@ one `if` with two direct constructors of the same non-empty fixed
 continues to reject schema drift, symbol forwarding, nested/non-scalar
 aggregates, and escaping aggregate ABI claims.
 
+For native variant scalar replacement, the verifier independently admits a
+sealed variant only when every payload is `:i64` or `:bool` and the value is a
+direct constructor, one local binding, or one same-schema variant-valued `if`.
+Matches must cover every case in declaration order. Legacy directly nested
+matches retain their established wider payload support; local symbol
+forwarding and variant parameters/results remain rejected.
+
 ## Does not own
 
 - produce artifacts
