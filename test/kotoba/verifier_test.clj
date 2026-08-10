@@ -7,6 +7,7 @@
             [kotoba.kir.compatibility :as compatibility]
             [kotoba.kir.target :as target]
             [kotoba.native.aggregate-abi :as aggregate-abi]
+            [kotoba.native.machine-ir :as machine]
             [kotoba.native.x86-64 :as x86-64]
             [kotoba.verifier]
             [kotoba.verifier.conformance :as conformance]
@@ -78,6 +79,25 @@
     (is (pos? (get-in sealed [:exports 'main :offset]))
         "the exported entry follows the internal callee in the code image")
     (is (pos? (get-in sealed [:exports 'main :length])))))
+
+(deftest pinned-producer-materializes-only-the-live-across-call-value
+  (let [kir {:format :kotoba.kir/v4
+             :exports ['main]
+             :functions
+             [{:name 'inc-one :params ['x] :result :i64 :body '(+ x 1)}
+              {:name 'main :params ['x] :result :i64
+               :body '(let [live 10] (+ live (inc-one x)))}]}]
+    (doseq [target [:x86-64 :aarch64]]
+      (let [mc (->> kir machine/lower-kir-module
+                    (machine/compile-gmir target))
+            caller (second (:mc/functions mc))
+            encodings (map :mc/encoding (:mc/instructions caller))]
+        (is (= :call-live (:mc/frame-policy caller)) target)
+        (is (= 1 (:mc/frame-slots caller)) target)
+        (is (= 1 (count (filter #{(keyword (name target) "spill-store")}
+                                encodings))) target)
+        (is (= 1 (count (filter #{(keyword (name target) "spill-load")}
+                                encodings))) target)))))
 
 (defn- vector-fixture []
   (edn/read-string (slurp (io/resource "conformance/dual-surface-v1.edn"))))

@@ -14,13 +14,14 @@
         ;; This pin contains scalar replacement for non-escaping fixed
         ;; i64/bool records and sealed i64/bool-payload variants, plus the
         ;; versioned aggregate boundary contract that admits scalar direct
-        ;; calls only after explicit frame/clobber prerequisites are present.
+        ;; calls only after explicit frame/clobber prerequisites are present,
+        ;; and materializes only values live across straight-line calls.
         ;; Record and variant values remain held at extracted boundaries.
         ;; Verification therefore re-emits with the exact producer
         ;; implementation whose KIR slice is admitted here.
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
-         :git/sha "228e389ccc449d6256a7f6ba0b623203e0a439d9"}
+         :git/sha "30d4a1fb6f1ccc4e52d5abd11852a7fecf8bcab8"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}

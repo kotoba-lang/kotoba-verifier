@@ -30,7 +30,9 @@ v2. It checks that the existing record boundary is still a one-word,
 context-owned pair-chain handle, record and variant crossings remain `:held`,
 and scalar direct calls are admitted only with the complete per-function
 frame/clobber guarantee set. It also re-emits a two-function call module with
-the pinned production emitter. Reading this producer contract does not widen
+the pinned production emitter and checks that its representative caller uses
+the liveness-minimal `:call-live` policy with one slot, save, and reload.
+Reading this producer contract does not widen
 the verifier's independently derived record or variant predicates.
 
 ## Does not own
