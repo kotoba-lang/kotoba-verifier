@@ -12,13 +12,14 @@
         ;; put the disagreement inside this repo's own closure.
         ;;
         ;; This pin contains scalar replacement for non-escaping fixed
-        ;; i64/bool records and sealed i64/bool-payload variants, in addition
-        ;; to the earlier string-index, bool, and boxed-record fixes.
+        ;; i64/bool records and sealed i64/bool-payload variants, plus the
+        ;; versioned aggregate boundary contract that keeps extracted calls
+        ;; held behind explicit frame/clobber prerequisites.
         ;; Verification therefore re-emits with the exact producer
         ;; implementation whose KIR slice is admitted here.
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
-         :git/sha "d2e68785092229fef85e0e18e23534563cd80a82"}
+         :git/sha "ceca09377c53a33c4ea8bcf4a3f2e49f32cdf83d"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}
