@@ -597,6 +597,64 @@
                                (list 'let ['r record-if]
                                      (list 'record-get projected-type 'r :b)))))))))
 
+(def ^:private scalar-variant
+  '[:variant :t/value [[:number :i64] [:flag :bool]]])
+(def ^:private other-variant
+  '[:variant :t/other [[:number :i64] [:flag :bool]]])
+
+(defn- variant-outcome [body]
+  (try (#'kotoba.verifier/verify-program!
+        (assoc-in ok-program [:functions 0 :body] body))
+       nil
+       (catch clojure.lang.ExceptionInfo e (ex-message e))))
+
+(defn- match-variant [value]
+  (list 'variant-match scalar-variant value
+        [[:number 'payload (list '+ 'payload 1)]
+         [:flag 'payload (list 'if 'payload 1 7)]]))
+
+(deftest a-local-scalar-variant-may-be-constructed-bound-and-matched
+  (doseq [constructor [(list 'variant-new scalar-variant :number 41)
+                       (list 'variant-new scalar-variant :flag false)]]
+    (is (nil? (variant-outcome
+               (list 'let ['v constructor] (match-variant 'v)))))))
+
+(deftest a-same-schema-scalar-variant-if-may-be-matched
+  (let [variant-if (list 'if 1
+                         (list 'variant-new scalar-variant :number 41)
+                         (list 'variant-new scalar-variant :flag false))]
+    (is (nil? (variant-outcome (match-variant variant-if))))
+    (is (nil? (variant-outcome
+               (list 'let ['v variant-if] (match-variant 'v)))))))
+
+(deftest variant-sroa-admission-stays-fail-closed
+  (let [string-variant '[:variant :t/string [[:number :i64] [:text :string]]]]
+    (testing "symbol forwarding"
+      (is (= "runtime KIR variant dispatch rejected"
+             (variant-outcome
+              (list 'let ['v (list 'variant-new scalar-variant :number 1)
+                          'v2 'v]
+                    (match-variant 'v2))))))
+    (testing "different branch schemas"
+      (is (= "runtime KIR variant dispatch rejected"
+             (variant-outcome
+              (match-variant
+               (list 'if 1
+                     (list 'variant-new scalar-variant :number 1)
+                     (list 'variant-new other-variant :flag false)))))))
+    (testing "non-scalar local payload family"
+      (is (= "runtime KIR variant dispatch rejected"
+             (variant-outcome
+              (list 'let ['v (list 'variant-new string-variant :text "x")]
+                    (list 'variant-match string-variant 'v
+                          [[:number 'x 'x] [:text 'x 0]]))))))
+    (testing "reordered branches"
+      (is (= "runtime KIR variant dispatch rejected"
+             (variant-outcome
+              (list 'variant-match scalar-variant
+                    (list 'variant-new scalar-variant :number 1)
+                    [[:flag 'x 0] [:number 'x 'x]])))))))
+
 (deftest an-undeclared-field-is-still-rejected-through-a-handle
   (doseq [result [rec rec-ref]]
     (is (= "runtime KIR record projection rejected"

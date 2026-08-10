@@ -344,6 +344,13 @@
   (and (native-scalar-record-type? type)
        (every? #(contains? #{:i64 :bool} (second %)) (nth type 2))))
 
+;; The exact sealed-variant family kotoba-native may keep as a tag/payload SSA
+;; bundle. The legacy emitter admits additional one-word and record payloads;
+;; those remain available only to its directly nested match shape.
+(defn- scalar-replaced-variant-type? [type]
+  (and (native-scalar-variant-type? type)
+       (every? #(contains? #{:i64 :bool} (second %)) (nth type 2))))
+
 ;; A value-position IF may transport an SROA bundle only when both branches
 ;; construct the same exact record type. Conditions stay scalar and are checked
 ;; separately by `verify-expr!`. Do not resolve symbols here: forwarding a
@@ -356,6 +363,42 @@
       (when (and (= then-schema else-schema)
                  (scalar-replaced-record-type? then-schema))
         then-schema))))
+
+(defn- variant-new-schema [value]
+  (when (and (seq? value) (= 'variant-new (first value)) (= 4 (count value)))
+    (let [[_ type tag _payload] value]
+      (when (and (scalar-replaced-variant-type? type)
+                 (some #(= tag (first %)) (nth type 2)))
+        type))))
+
+;; Like records, the only value-position IF remembered as a local variant is
+;; one whose two arms directly construct the identical scalar-replaced schema.
+;; Symbols are deliberately not resolved here, preventing aggregate forwarding.
+(defn- variant-sroa-if-schema [value]
+  (when (and (seq? value) (= 'if (first value)) (= 4 (count value)))
+    (let [[_ _test then-value else-value] value
+          then-schema (variant-new-schema then-value)
+          else-schema (variant-new-schema else-value)]
+      (when (= then-schema else-schema) then-schema))))
+
+(defn- variant-local [type]
+  {:aggregate/kind :variant :aggregate/type type})
+
+(defn- variant-schema-of [form locals]
+  (cond
+    ;; Preserve ADR 0063's broader legacy direct-match family.
+    (and (seq? form) (= 'variant-new (first form)) (= 4 (count form))
+         (native-scalar-variant-type? (second form)))
+    (second form)
+
+    (and (seq? form) (= 'if (first form)))
+    (variant-sroa-if-schema form)
+
+    (symbol? form)
+    (let [local (get locals form)]
+      (when (= :variant (:aggregate/kind local)) (:aggregate/type local)))
+
+    :else nil))
 
 (declare record-schema-of)
 
@@ -449,6 +492,12 @@
       (call-record-schema value)
       (record-sroa-if-schema value)))
 
+(defn- binding-local [value]
+  (or (binding-record-schema value)
+      (when-let [type (or (variant-new-schema value)
+                          (variant-sroa-if-schema value))]
+        (variant-local type))))
+
 (defn- verify-bindings! [bindings locals signatures depth nodes facts]
   (when-not (and (vector? bindings) (even? (count bindings))
                  (<= (quot (count bindings) 2) max-bindings))
@@ -462,7 +511,7 @@
         (when-not (valid-name? name)
           (reject! "runtime KIR local name rejected" {:name name}))
         (verify-expr! value env signatures (inc depth) nodes facts)
-        (recur (next pairs) (assoc env name (binding-record-schema value))))
+        (recur (next pairs) (assoc env name (binding-local value))))
       env)))
 
 (defn- verify-expr! [form locals signatures depth nodes facts]
@@ -653,21 +702,20 @@
             (reject! "runtime KIR variant construction rejected" {:operation op}))
           (verify-expr! payload locals signatures (inc depth) nodes facts))
 
-        ;; ADR 0063, mirroring `record-get` immediately above: the codegen
-        ;; backends (`emit-variant-match-of-new` in both `backend/x86-
-        ;; 64.cljc` and `backend/aarch64.cljc`) require `value` to be a
-        ;; directly-nested, same-schema `variant-new` -- this independent
-        ;; re-check enforces the EXACT same narrow shape. `branches` must
-        ;; exhaustively cover every declared case, in the SAME order (the
-        ;; ordinal each branch corresponds to is its position).
+        ;; ADR 0063's legacy path accepts a directly nested construction. The
+        ;; extracted producer additionally accepts one local scalar variant,
+        ;; constructed directly or by a same-schema IF. `variant-schema-of`
+        ;; independently re-derives exactly those shapes; it never follows a
+        ;; second symbol binding or accepts a boundary value. Branches still
+        ;; exhaustively cover cases in ordinal order.
         (= op 'variant-match)
         (let [[type value branches] args
-              cases (when (native-scalar-variant-type? type) (nth type 2))]
+              cases (when (native-scalar-variant-type? type) (nth type 2))
+              declared (variant-schema-of value locals)]
           (when-not (and (= 3 (count args)) cases
                         (vector? branches) (= (mapv first cases) (mapv first branches))
                         (every? #(and (vector? %) (= 3 (count %)) (valid-name? (second %))) branches)
-                        (seq? value) (= 'variant-new (first value)) (= type (second value))
-                        (some #(= (nth value 2) (first %)) cases))
+                        (= type declared))
             (reject! "runtime KIR variant dispatch rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
           ;; Each branch's binder carries the schema of ITS OWN declared case
