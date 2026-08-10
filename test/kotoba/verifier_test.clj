@@ -564,6 +564,14 @@
                  (list 'let ['r record-if]
                        (list 'record-get rec 'r field))))))))
 
+(deftest a-same-schema-scalar-record-if-may-be-projected-directly
+  (let [record-if (list 'if 1
+                        (list 'record-new rec 1 2)
+                        (list 'record-new rec 3 4))]
+    (doseq [field [:a :b]]
+      (is (nil? (handle-outcome rec
+                                (list 'record-get rec record-if field)))))))
+
 (deftest record-sroa-binding-shape-stays-fail-closed
   (let [string-rec '[:record :t/string-pair [[:a :string] [:b :i64]]]
         nested-rec [:record :t/nested [[:a rec] [:b :i64]]]]
