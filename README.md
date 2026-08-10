@@ -12,6 +12,12 @@ checkable from outside.
 
 - `kotoba.verifier (target contract + re-emission equality check)`
 
+For native record scalar replacement, the verifier independently admits only
+a `let` binding whose value is one `if` with two direct constructors of the
+same non-empty fixed `:i64`/`:bool` record. It continues to reject schema drift,
+symbol forwarding, nested/non-scalar aggregates, and escaping aggregate ABI
+claims.
+
 ## Does not own
 
 - produce artifacts

@@ -336,6 +336,27 @@
              (native-scalar-record-type? (second value)))
     (second value)))
 
+;; The exact aggregate family kotoba-native may keep as an ordered SSA bundle.
+;; This is deliberately narrower than `native-scalar-record-type?`, which also
+;; describes legacy one-word/flattened representations. SROA currently owns no
+;; string, option/result, or nested-record representation.
+(defn- scalar-replaced-record-type? [type]
+  (and (native-scalar-record-type? type)
+       (every? #(contains? #{:i64 :bool} (second %)) (nth type 2))))
+
+;; A value-position IF may transport an SROA bundle only when both branches
+;; construct the same exact record type. Conditions stay scalar and are checked
+;; separately by `verify-expr!`. Do not resolve symbols here: forwarding a
+;; flattened record through a second binding remains outside the emitter.
+(defn- record-sroa-if-schema [value]
+  (when (and (seq? value) (= 'if (first value)) (= 4 (count value)))
+    (let [[_ _test then-value else-value] value
+          then-schema (record-new-schema then-value)
+          else-schema (record-new-schema else-value)]
+      (when (and (= then-schema else-schema)
+                 (scalar-replaced-record-type? then-schema))
+        then-schema))))
+
 (declare record-schema-of)
 
 ;; Declared result type per function, for resolving a record that arrives boxed
@@ -401,13 +422,17 @@
 
 ;; The record schema a LET BINDING's value denotes, or nil.
 ;;
-;; Two shapes, and deliberately only two. A directly-nested `record-new`, which
+;; Three shapes, deliberately. A directly-nested `record-new`, which
 ;; is FLATTENED into one slot per field by the backends. And a CALL whose
 ;; declared result is a record, which arrives as the one-word pair-chain handle
 ;; a record result has crossed on since kotoba-native ADR 0062 --
 ;; `(let [ends (partition-3-ends x)] (record-get … ends :hi0))`, which is how
 ;; murakumo's plan and schedule cores read a multi-field result, and the last
 ;; shape in those cores with no native lowering.
+;;
+;; The third is one value-position IF whose two branches directly construct the
+;; same exact i64/bool record. The native pilot scalar-replaces that shape and
+;; emits one phi per field, so the binding carries the same ordered bundle.
 ;;
 ;; NOT the general `record-schema-of`. That also resolves a bare SYMBOL, so
 ;; using it here would admit `(let [r (record-new …) r2 r] (record-get … r2 :b))`
@@ -416,7 +441,9 @@
 ;; gate no wider than the emitter it re-derives; the two must agree about the
 ;; shape, not merely both be "narrow".
 (defn- binding-record-schema [value]
-  (or (record-new-schema value) (call-record-schema value)))
+  (or (record-new-schema value)
+      (call-record-schema value)
+      (record-sroa-if-schema value)))
 
 (defn- verify-bindings! [bindings locals signatures depth nodes facts]
   (when-not (and (vector? bindings) (even? (count bindings))

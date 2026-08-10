@@ -554,6 +554,41 @@
          (handle-outcome rec (list 'let ['r (list 'record-new rec 4 9) 'r2 'r]
                                    (list 'record-get rec 'r2 :b))))))
 
+(deftest a-same-schema-scalar-record-if-may-be-bound-and-projected
+  (let [record-if (list 'if 1
+                        (list 'record-new rec 1 2)
+                        (list 'record-new rec 3 4))]
+    (doseq [field [:a :b]]
+      (is (nil? (handle-outcome
+                 rec
+                 (list 'let ['r record-if]
+                       (list 'record-get rec 'r field))))))))
+
+(deftest record-sroa-binding-shape-stays-fail-closed
+  (let [string-rec '[:record :t/string-pair [[:a :string] [:b :i64]]]
+        nested-rec [:record :t/nested [[:a rec] [:b :i64]]]]
+    (doseq [[why projected-type record-if]
+            [["different branch schemas"
+              rec
+              (list 'if 1
+                    (list 'record-new rec 1 2)
+                    (list 'record-new other-rec 3 4))]
+             ["string field"
+              string-rec
+              (list 'if 1
+                    (list 'record-new string-rec "a" 2)
+                    (list 'record-new string-rec "b" 4))]
+             ["nested record field"
+              nested-rec
+              (list 'if 1
+                    (list 'record-new nested-rec (list 'record-new rec 1 2) 3)
+                    (list 'record-new nested-rec (list 'record-new rec 4 5) 6))]]]
+      (testing why
+        (is (= "runtime KIR record projection rejected"
+               (handle-outcome rec
+                               (list 'let ['r record-if]
+                                     (list 'record-get projected-type 'r :b)))))))))
+
 (deftest an-undeclared-field-is-still-rejected-through-a-handle
   (doseq [result [rec rec-ref]]
     (is (= "runtime KIR record projection rejected"
