@@ -13,9 +13,10 @@ compiled in the producer and was rejected before artifact admission.
 ## Decision
 
 The verifier pins native `8374a6c4cdd31110363a6996eaba6a737d9d9f02` and
-independently recognizes one additional binding shape: an `if` whose two
-branches are direct `record-new` forms of the same exact non-empty fixed record,
-with unique keyword fields whose types are only `:i64` or `:bool`.
+independently recognizes one additional value shape: an `if` whose two branches
+are direct `record-new` forms of the same exact non-empty fixed record, with
+unique keyword fields whose types are only `:i64` or `:bool`. That value may be
+projected directly or named by one `let` before projection.
 
 Each branch is still recursively verified, including the condition and every
 constructor field. A later `record-get` must use the exact schema and a declared

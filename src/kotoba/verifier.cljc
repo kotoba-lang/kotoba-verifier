@@ -409,6 +409,10 @@
 (defn- record-schema-of [form locals]
   (cond
     (and (seq? form) (= 'record-new (first form))) (second form)
+    ;; The same exact SROA IF may be projected directly or named by one let.
+    ;; `record-sroa-if-schema` deliberately does not resolve symbols, so this
+    ;; does not turn into general aggregate inference or forwarding.
+    (and (seq? form) (= 'if (first form))) (record-sroa-if-schema form)
     (symbol? form) (get locals form)
     ;; A call whose declared result is a record: the operand arrived boxed.
     (and (seq? form) (simple-symbol? (first form)) (contains? *call-results* (first form)))
