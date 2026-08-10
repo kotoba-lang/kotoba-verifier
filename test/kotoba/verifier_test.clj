@@ -20,27 +20,64 @@
   (is (some? (find-ns 'kotoba.verifier.conformance))
       "kotoba.verifier.conformance must load"))
 
+(declare native-artifact)
+
 (deftest aggregate-boundary-contract-does-not-widen-verifier-admission
   (let [record-type [:record :t/pair [[:left :i64] [:ready :bool]]]
-        plan (aggregate-abi/record-boundary-plan record-type)]
-    (is (= 1 (:abi/version aggregate-abi/contract)))
+        plan (aggregate-abi/record-boundary-plan record-type)
+        guarantees #{:per-function-frame
+                     :spill-live-values-across-call
+                     :parallel-argument-assignment
+                     :single-word-return-register}]
+    (is (= 2 (:abi/version aggregate-abi/contract)))
     (is (= :pair-chain-handle (:boundary/results plan)))
     (is (= :host-context (:boundary/ownership plan)))
     (is (= 4096 (:boundary/arena-cell-limit plan)))
     (is (= :held (:boundary/extracted-admission plan)))
     (is (#'kotoba.verifier/native-boundary-type? record-type)
         "the established boxed record boundary remains independently admitted")
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"call-abi-not-admitted"
-         (aggregate-abi/admit-extracted-call!
-          :x86-64
-          #{:per-function-frame
-            :spill-live-values-across-call
-            :parallel-argument-assignment
-            :single-word-return-register})))
+    (is (= :held (get-in aggregate-abi/contract
+                         [:extracted :record-boundary])))
+    (is (= :held (get-in aggregate-abi/contract
+                         [:extracted :variant-boundary])))
+    (is (= :scalar-admitted (get-in aggregate-abi/contract
+                                    [:extracted :call-admission])))
+    (is (= guarantees (get-in aggregate-abi/contract
+                              [:extracted :call-requires])))
+    (doseq [target [:x86-64 :aarch64]]
+      (is (= (aggregate-abi/call-profile target)
+             (aggregate-abi/admit-extracted-call! target guarantees)) target)
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo #"missing-call-guarantees"
+           (aggregate-abi/admit-extracted-call!
+            target (disj guarantees :spill-live-values-across-call))) target))
     (is (not (#'kotoba.verifier/native-boundary-type?
               [:record :t/duplicate [[:value :i64] [:value :bool]]]))
         "the contract cannot widen the verifier's independently derived set")))
+
+(deftest scalar-direct-call-is-reemitted-by-the-pinned-production-backend
+  (let [program {:format :kotoba.kir/v3
+                 :entry 'main
+                 :exports ['main]
+                 :signature {:params [] :result :i64}
+                 :effects #{}
+                 :functions [{:name 'inc-one
+                              :params ['x]
+                              :param-types [:i64]
+                              :result :i64
+                              :effects #{}
+                              :body '(+ x 1)}
+                             {:name 'main
+                              :params []
+                              :result :i64
+                              :effects #{}
+                              :body '(let [live 40]
+                                       (+ live (inc-one 1)))}]}
+        sealed (native-artifact program)]
+    (is (= sealed (kotoba.verifier/verify-artifact! sealed)))
+    (is (pos? (get-in sealed [:exports 'main :offset]))
+        "the exported entry follows the internal callee in the code image")
+    (is (pos? (get-in sealed [:exports 'main :length])))))
 
 (defn- vector-fixture []
   (edn/read-string (slurp (io/resource "conformance/dual-surface-v1.edn"))))
@@ -56,7 +93,8 @@
      {:format :kotoba.kexe/v1
       :target :x86_64-kotoba-v1
       :target-profile profile
-      :value nil
+      :value (when (and (empty? (:effects program)) (some? (:entry program)))
+               (kotoba.kir/execute program (:entry program) [] {:fuel fuel}))
       :kir-sha256 (artifact/sha256 program)
       :lowering :runtime-sysv-v1
       :fuel-abi {:mode :hidden-context-r9 :initial fuel}
@@ -80,9 +118,12 @@
       :effects (:effects program)
       :compatibility
       (compatibility/descriptor
-       {:hir-format :kotoba.hir/v3 :kir-format :kotoba.kir/v4
+       {:hir-format (if (= :kotoba.kir/v4 (:format program))
+                      :kotoba.hir/v3 :kotoba.hir/v2)
+        :kir-format (:format program)
         :target :x86_64-kotoba-v1 :target-profile profile
-        :value-abi :kotoba.typed/externref-v1})
+        :value-abi (if (= :kotoba.kir/v4 (:format program))
+                     :kotoba.typed/externref-v1 :kotoba.i64/direct-v1)})
       :limits {:memory-bytes 65536 :fuel fuel :stack-bytes 4096}
       :code (mapv #(bit-and (int %) 0xff) (:code emitted))
       :program program
