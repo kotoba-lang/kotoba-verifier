@@ -6,6 +6,7 @@
             [kotoba.kir]
             [kotoba.kir.compatibility :as compatibility]
             [kotoba.kir.target :as target]
+            [kotoba.native.aggregate-abi :as aggregate-abi]
             [kotoba.native.x86-64 :as x86-64]
             [kotoba.verifier]
             [kotoba.verifier.conformance :as conformance]
@@ -18,6 +19,28 @@
   (is (some? (find-ns 'kotoba.verifier.signing)) "kotoba.verifier.signing must load")
   (is (some? (find-ns 'kotoba.verifier.conformance))
       "kotoba.verifier.conformance must load"))
+
+(deftest aggregate-boundary-contract-does-not-widen-verifier-admission
+  (let [record-type [:record :t/pair [[:left :i64] [:ready :bool]]]
+        plan (aggregate-abi/record-boundary-plan record-type)]
+    (is (= 1 (:abi/version aggregate-abi/contract)))
+    (is (= :pair-chain-handle (:boundary/results plan)))
+    (is (= :host-context (:boundary/ownership plan)))
+    (is (= 4096 (:boundary/arena-cell-limit plan)))
+    (is (= :held (:boundary/extracted-admission plan)))
+    (is (#'kotoba.verifier/native-boundary-type? record-type)
+        "the established boxed record boundary remains independently admitted")
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"call-abi-not-admitted"
+         (aggregate-abi/admit-extracted-call!
+          :x86-64
+          #{:per-function-frame
+            :spill-live-values-across-call
+            :parallel-argument-assignment
+            :single-word-return-register})))
+    (is (not (#'kotoba.verifier/native-boundary-type?
+              [:record :t/duplicate [[:value :i64] [:value :bool]]]))
+        "the contract cannot widen the verifier's independently derived set")))
 
 (defn- vector-fixture []
   (edn/read-string (slurp (io/resource "conformance/dual-surface-v1.edn"))))

@@ -25,6 +25,12 @@ Matches must cover every case in declaration order. Legacy directly nested
 matches retain their established wider payload support; local symbol
 forwarding and variant parameters/results remain rejected.
 
+The verifier pins the native producer containing aggregate-boundary contract
+v1. It checks that the existing record boundary is still a one-word,
+context-owned pair-chain handle and that extracted calls remain `:held` even
+when all prerequisite names are supplied. Reading this producer contract does
+not widen the verifier's independently derived record or variant predicates.
+
 ## Does not own
 
 - produce artifacts
