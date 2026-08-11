@@ -205,6 +205,19 @@
                (nth type 2))
        (= (count (nth type 2)) (count (distinct (map first (nth type 2)))))))
 
+(defn- native-scalar-variant-boundary-type?
+  "Independent copy of aggregate ABI v3's narrower public boundary."
+  [type]
+  (and (vector? type) (= 3 (count type)) (= :variant (first type))
+       (keyword? (second type)) (some? (namespace (second type)))
+       (vector? (nth type 2)) (<= 1 (count (nth type 2)) max-variant-cases)
+       (every? #(and (vector? %) (= 2 (count %))
+                     (keyword? (first %))
+                     (contains? #{:i64 :bool} (second %)))
+               (nth type 2))
+       (= (count (nth type 2))
+          (count (distinct (map first (nth type 2)))))))
+
 (defn- native-word-value-type?
   "Independent verifier copy of the recursive one-word native value slice."
   ([type] (native-word-value-type? type 0))
@@ -384,6 +397,8 @@
 (defn- variant-local [type]
   {:aggregate/kind :variant :aggregate/type type})
 
+(declare ^:dynamic *call-results*)
+
 (defn- variant-schema-of [form locals]
   (cond
     ;; Preserve ADR 0063's broader legacy direct-match family.
@@ -397,6 +412,11 @@
     (symbol? form)
     (let [local (get locals form)]
       (when (= :variant (:aggregate/kind local)) (:aggregate/type local)))
+
+    (and (seq? form) (simple-symbol? (first form))
+         (contains? *call-results* (first form)))
+    (let [result (get *call-results* (first form))]
+      (when (native-scalar-variant-boundary-type? result) result))
 
     :else nil))
 
@@ -982,6 +1002,10 @@
 ;; something: widening it on its own would have changed nothing.
 (def ^:private entry-result-types #{:i64 :bool})
 
+(defn- entry-result-type? [type]
+  (or (contains? entry-result-types type)
+      (native-scalar-variant-boundary-type? type)))
+
 ;; An INTERNAL function may also return a `:string`. This is deliberately wider
 ;; than `entry-result-types`, and the two are separate because they answer
 ;; different questions: the entry's result crosses to the host, which is why
@@ -1068,6 +1092,7 @@
       ;; guard wrapping this `or` was the entire exclusion.
       (native-word-value-type? type)
       (native-scalar-record-type? type)
+      (native-scalar-variant-boundary-type? type)
       (and (vector? type) (= 2 (count type)) (= :ref (first type))
            (keyword? (second type)) (some? (namespace (second type))))))
 
@@ -1100,7 +1125,7 @@
                        (and (nil? (:entry p)) (seq (:exports p)))))]
    [:signature-params (fn [p] (or (nil? (:entry p)) (= [] (:params (:signature p)))))]
    [:signature-result (fn [p] (or (nil? (:entry p))
-                                  (contains? entry-result-types (:result (:signature p)))))]
+                                  (entry-result-type? (:result (:signature p)))))]
    [:signature-keys (fn [p] (if (nil? (:entry p))
                               (nil? (:signature p))
                               (= #{:params :result} (set (keys (:signature p))))))]
@@ -1110,19 +1135,22 @@
    [:exports-vector (fn [p] (vector? (:exports p)))]
    [:function-count (fn [p] (<= 1 (count (:functions p)) max-functions))]])
 
-(defn- record-param-locals
-  "Parameter environment for verifying a body: a record-typed parameter carries
-  its declared schema -- expanded, or the `[:ref :ns/name]` naming it -- and
-  everything else carries nil, because a plain word has no schema."
+(defn- aggregate-param-locals
+  "Parameter schemas used to independently check record projection and
+  scalar-variant dispatch."
   [function]
   (let [param-types (:param-types function)]
     (into {}
           (map-indexed (fn [i param]
                          [param (let [t (nth param-types i nil)]
-                                  (when (or (native-scalar-record-type? t)
-                                            (and (vector? t) (= 2 (count t))
-                                                 (= :ref (first t)) (keyword? (second t))))
-                                    t))]))
+                                  (cond
+                                    (native-scalar-variant-boundary-type? t)
+                                    (variant-local t)
+                                    (or (native-scalar-record-type? t)
+                                        (and (vector? t) (= 2 (count t))
+                                             (= :ref (first t)) (keyword? (second t))))
+                                    t
+                                    :else nil))]))
           (:params function))))
 
 (defn- valid-closure-param-indexes? [function]
@@ -1240,7 +1268,7 @@
                          ;; requires the projected schema to EQUAL the declared
                          ;; one. Every other parameter stays nil, as before: a
                          ;; plain word has no schema to carry.
-                         (verify-expr! (:body function) (record-param-locals function)
+                         (verify-expr! (:body function) (aggregate-param-locals function)
                                        signatures 0 nodes facts)
                          [(:name function) @facts])))
                 functions)

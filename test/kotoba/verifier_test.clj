@@ -30,7 +30,7 @@
                      :spill-live-values-across-call
                      :parallel-argument-assignment
                      :single-word-return-register}]
-    (is (= 2 (:abi/version aggregate-abi/contract)))
+    (is (= 3 (:abi/version aggregate-abi/contract)))
     (is (= :pair-chain-handle (:boundary/results plan)))
     (is (= :host-context (:boundary/ownership plan)))
     (is (= 4096 (:boundary/arena-cell-limit plan)))
@@ -39,8 +39,8 @@
         "the established boxed record boundary remains independently admitted")
     (is (= :held (get-in aggregate-abi/contract
                          [:extracted :record-boundary])))
-    (is (= :held (get-in aggregate-abi/contract
-                         [:extracted :variant-boundary])))
+    (is (= :scalar-pair-handle-admitted
+           (get-in aggregate-abi/contract [:extracted :variant-boundary])))
     (is (= :scalar-admitted (get-in aggregate-abi/contract
                                     [:extracted :call-admission])))
     (is (= guarantees (get-in aggregate-abi/contract
@@ -824,9 +824,49 @@
     (testing "reordered branches"
       (is (= "runtime KIR variant dispatch rejected"
              (variant-outcome
-              (list 'variant-match scalar-variant
+             (list 'variant-match scalar-variant
                     (list 'variant-new scalar-variant :number 1)
                     [[:flag 'x 0] [:number 'x 'x]])))))))
+
+(defn- variant-boundary-program [body]
+  {:format :kotoba.kir/v4
+   :entry nil
+   :exports ['consume]
+   :signature nil
+   :effects #{}
+   :functions
+   [{:name 'consume :params ['value] :param-types [scalar-variant]
+     :result :i64 :effects #{} :body body}]})
+
+(deftest scalar-variant-export-boundary-is-independently-verified-and-reemitted
+  (let [program (variant-boundary-program (match-variant 'value))
+        sealed (native-artifact program)]
+    (is (= program (#'kotoba.verifier/verify-program! program)))
+    (is (= sealed (kotoba.verifier/verify-artifact! sealed)))
+    (is (pos? (get-in sealed [:exports 'consume :length])))))
+
+(deftest scalar-variant-call-results-are-dispatchable
+  (let [program
+        (update (variant-boundary-program (match-variant '(make))) :functions
+                #(into [{:name 'make :params [] :param-types []
+                         :result scalar-variant :effects #{}
+                         :body (list 'variant-new scalar-variant :flag true)}]
+                       %))]
+    (is (= program (#'kotoba.verifier/verify-program! program)))))
+
+(deftest scalar-variant-boundary-stays-narrow-and-ordinal-closed
+  (let [string-variant '[:variant :t/text [[:text :string]]]]
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"function shape rejected"
+         (#'kotoba.verifier/verify-program!
+          (assoc-in (variant-boundary-program 0)
+                    [:functions 0 :param-types] [string-variant]))))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"variant dispatch rejected"
+         (#'kotoba.verifier/verify-program!
+          (variant-boundary-program
+           (list 'variant-match scalar-variant 'value
+                 [[:flag 'payload 0] [:number 'payload 'payload]])))))))
 
 (deftest an-undeclared-field-is-still-rejected-through-a-handle
   (doseq [result [rec rec-ref]]
