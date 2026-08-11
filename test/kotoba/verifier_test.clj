@@ -99,6 +99,44 @@
         (is (= 1 (count (filter #{(keyword (name target) "spill-load")}
                                 encodings))) target)))))
 
+(deftest pinned-producer-assigns-four-entry-arguments-in-parallel
+  (let [kir {:format :kotoba.kir/v4
+             :exports ['main]
+             :functions
+             [{:name 'sum-four :params ['a 'b 'c 'd] :result :i64
+               :body '(+ (+ a b) (+ c d))}
+              {:name 'main :params ['a 'b 'c 'd] :result :i64
+               :body '(sum-four a b c d)}]}]
+    (doseq [target [:x86-64 :aarch64]]
+      (let [[callee caller]
+            (:mc/functions (->> kir machine/lower-kir-module
+                                (machine/compile-gmir target)))
+            argument-encoding (keyword (name target) "argument")
+            move-encoding (keyword (name target) "move")
+            spill-encodings #{(keyword (name target) "spill-store")
+                              (keyword (name target) "spill-load")}
+            expected-inputs (if (= :x86-64 target)
+                              [:x86-64/rdi :x86-64/rsi
+                               :x86-64/rdx :x86-64/rcx]
+                              [:aarch64/x0 :aarch64/x1
+                               :aarch64/x2 :aarch64/x3])]
+        (is (= [0 0] (mapv :mc/frame-slots [callee caller])) target)
+        (is (= [:allocator :call-live]
+               (mapv :mc/frame-policy [callee caller])) target)
+        (doseq [function [callee caller]]
+          (is (= expected-inputs
+                 (mapv :mir/dst
+                       (filter #(= argument-encoding (:mc/encoding %))
+                               (:mc/instructions function))))
+              [target (:mc/name function)])
+          (is (not-any? #(contains? spill-encodings (:mc/encoding %))
+                        (:mc/instructions function))
+              [target (:mc/name function)]))
+        (is (= (if (= :x86-64 target) 3 0)
+               (count (filter #(= move-encoding (:mc/encoding %))
+                              (:mc/instructions callee))))
+            target)))))
+
 (defn- vector-fixture []
   (edn/read-string (slurp (io/resource "conformance/dual-surface-v1.edn"))))
 

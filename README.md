@@ -32,6 +32,9 @@ and scalar direct calls are admitted only with the complete per-function
 frame/clobber guarantee set. It also re-emits a two-function call module with
 the pinned production emitter and checks that its representative caller uses
 the liveness-minimal `:call-live` policy with one slot, save, and reload.
+It also gates the pinned producer's function-entry ABI: four live scalar
+parameters must retain exact ABI markers and reach both native ISAs with zero
+frame slots and no spill operations.
 Reading this producer contract does not widen
 the verifier's independently derived record or variant predicates.
 
