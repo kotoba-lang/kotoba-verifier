@@ -23,7 +23,7 @@
         ;; implementation whose KIR slice is admitted here.
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
-         :git/sha "7a2139140d3205bd6e1293f6108ec3b08bf45e91"}
+         :git/sha "01cd291d984f79e43bba0f29247cb71ea0460aaf"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}
