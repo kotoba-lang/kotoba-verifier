@@ -225,14 +225,15 @@
        (= (count (nth type 2)) (count (distinct (map first (nth type 2)))))))
 
 (defn- native-scalar-variant-boundary-type?
-  "Independent copy of aggregate ABI v3's narrower public boundary."
+  "Independent copy of aggregate ABI v7's one-word public boundary."
   [type]
   (and (vector? type) (= 3 (count type)) (= :variant (first type))
        (keyword? (second type)) (some? (namespace (second type)))
        (vector? (nth type 2)) (<= 1 (count (nth type 2)) max-variant-cases)
        (every? #(and (vector? %) (= 2 (count %))
                      (keyword? (first %))
-                     (contains? #{:i64 :bool} (second %)))
+                     (or (contains? #{:i64 :bool} (second %))
+                         (native-scalar-record-type? (second %))))
                (nth type 2))
        (= (count (nth type 2))
           (count (distinct (map first (nth type 2)))))))

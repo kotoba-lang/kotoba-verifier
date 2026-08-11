@@ -12,7 +12,8 @@
         ;; put the disagreement inside this repo's own closure.
         ;;
         ;; This pin contains scalar replacement for fixed scalar records and
-        ;; variants, aggregate ABI v6 recursive record handles,
+        ;; variants, aggregate ABI v7 recursive record and variant payload
+        ;; handles, sealed callable dispatch, and closed linkage evidence,
         ;; liveness-minimal scalar calls,
         ;; parallel function entry, and bounded lazy entry spills. It also
         ;; carries the word/f64, bounded-memory, runtime/capability-call,
@@ -23,7 +24,7 @@
         ;; implementation whose KIR slice is admitted here.
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
-         :git/sha "8b1e22c9fb645e38ce16c3f2e24fc10468eba14d"}
+         :git/sha "a2023fed59208b0b4f48795d6e688f5cbd1aad8e"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}

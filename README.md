@@ -23,16 +23,17 @@ sealed variant only when every payload is `:i64` or `:bool` and the value is a
 direct constructor, one local binding, or one same-schema variant-valued `if`.
 Matches must cover every case in declaration order. Legacy directly nested
 matches retain their established wider payload support; local symbol
-forwarding remains rejected. Aggregate ABI v3 separately admits scalar variant
+forwarding remains rejected. Aggregate ABI v7 separately admits variant
 parameters/results as one pair handle; this verifier independently re-derives
-the qualified identity, 1--32 unique ordered cases, and `:i64`/`:bool` payload
-restriction, and tracks parameter/call-result schemas for exhaustive dispatch.
+the qualified identity, 1--32 unique ordered cases, and `:i64`/`:bool` or
+admitted-record payload restriction, and tracks parameter/call-result schemas
+for exhaustive dispatch.
 
 The verifier pins the native producer containing aggregate-boundary contract
-v3. It checks that the existing record boundary is still a one-word,
-context-owned pair-chain handle, record crossing remains `:held`, scalar
-variant crossing is explicitly admitted as a pair tag/payload handle,
-and scalar direct calls are admitted only with the complete per-function
+v7. It checks that record and aggregate-payload variant boundaries remain
+one-word, context-owned pair handles, callable dispatch stays ordinal-sealed,
+bounded `apply` remains capped at four arguments, linkage rejects ambient and
+unresolved symbols, and calls are admitted only with the complete per-function
 frame/clobber guarantee set. It also re-emits a two-function call module with
 the pinned production emitter and checks that its representative caller uses
 the liveness-minimal `:call-live` policy with one slot, save, and reload.
