@@ -47,7 +47,7 @@
                      :spill-live-values-across-call
                      :parallel-argument-assignment
                      :single-word-return-register}]
-    (is (= 6 (:abi/version aggregate-abi/contract)))
+    (is (= 7 (:abi/version aggregate-abi/contract)))
     (is (= :pair-chain-handle (:boundary/results plan)))
     (is (= :host-context (:boundary/ownership plan)))
     (is (= 4096 (:boundary/arena-cell-limit plan)))
@@ -58,10 +58,19 @@
         "the established boxed record boundary remains independently admitted")
     (is (= :word-pair-chain-admitted
            (get-in aggregate-abi/contract [:extracted :record-boundary])))
-    (is (= :scalar-pair-handle-admitted
+    (is (= :recursive-payload-pair-handle-admitted
            (get-in aggregate-abi/contract [:extracted :variant-boundary])))
-    (is (= :scalar-admitted (get-in aggregate-abi/contract
-                                    [:extracted :call-admission])))
+    (is (= :sealed-callable-admitted
+           (get-in aggregate-abi/contract [:extracted :call-admission])))
+    (is (= {:indirect :closed-ordinal-dispatch
+            :apply :bounded-pair-chain
+            :max-apply-arguments 4
+            :arbitrary-address false}
+           (get-in aggregate-abi/contract [:extracted :callable-dispatch])))
+    (is (= {:mode :closed-module-graph
+            :ambient-symbols false
+            :unresolved-symbols false}
+           (get-in aggregate-abi/contract [:extracted :linkage])))
     (is (= guarantees (get-in aggregate-abi/contract
                               [:extracted :call-requires])))
     (doseq [target [:x86-64 :aarch64]]
@@ -910,6 +919,33 @@
                          :body (list 'variant-new scalar-variant :flag true)}]
                        %))]
     (is (= program (#'kotoba.verifier/verify-program! program)))))
+
+(deftest aggregate-payload-variant-boundary-is-independently-verified
+  (let [record-type '[:record :t/pair [[:left :i64] [:right :i64]]]
+        variant-type `[:variant :t/record-or-count
+                       [[:record ~record-type] [:count :i64]]]
+        program {:format :kotoba.kir/v4
+                 :entry nil
+                 :exports ['consume]
+                 :signature nil
+                 :effects #{}
+                 :functions
+                 [{:name 'consume :params ['value]
+                   :param-types [variant-type]
+                   :result :i64 :effects #{}
+                   :body (list 'variant-match variant-type 'value
+                               [[:record 'payload
+                                 (list '+
+                                       (list 'record-get record-type 'payload :left)
+                                       (list 'record-get record-type 'payload :right))]
+                                [:count 'payload 'payload]])}]}
+        verified (#'kotoba.verifier/verify-program! program)
+        sealed (native-artifact program)]
+    (is (#'kotoba.verifier/native-boundary-type? variant-type))
+    (is (= program verified))
+    (is (= sealed (kotoba.verifier/verify-artifact! sealed)))
+    (doseq [target [:x86-64 :aarch64]]
+      (is (seq (:code (machine/compile-kir-module target verified))) target))))
 
 (deftest scalar-variant-boundary-stays-narrow-and-ordinal-closed
   (let [string-variant '[:variant :t/text [[:text :string]]]]
