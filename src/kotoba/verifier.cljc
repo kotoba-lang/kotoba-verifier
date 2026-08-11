@@ -917,7 +917,8 @@
             (reject! "runtime KIR kernel memory operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
-        (contains? '#{kernel-boot-info kernel-read-cr2 kernel-read-cr3 kernel-write-cr3 kernel-invlpg
+        (contains? '#{kernel-boot-info kernel-read-cr0 kernel-write-cr0
+                      kernel-read-cr2 kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                       kernel-cli kernel-sti kernel-hlt kernel-pause
                       kernel-out-u8 kernel-out-u32
                       kernel-in-u8 kernel-in-u32
@@ -941,7 +942,8 @@
           ;; 32-bit number. That is precisely the failure this independent
           ;; table exists to catch: a wrong arity here does not crash, it
           ;; returns the wrong machine's answer.
-          (when-not (= ({'kernel-boot-info 0 'kernel-read-cr2 0 'kernel-read-cr3 0 'kernel-write-cr3 1
+          (when-not (= ({'kernel-boot-info 0 'kernel-read-cr0 0 'kernel-write-cr0 1
+                         'kernel-read-cr2 0 'kernel-read-cr3 0 'kernel-write-cr3 1
                          'kernel-invlpg 1 'kernel-cli 0 'kernel-sti 0 'kernel-hlt 0
                          'kernel-pause 0 'kernel-out-u8 2 'kernel-out-u32 2
                          'kernel-in-u8 1 'kernel-in-u32 1
@@ -1321,6 +1323,7 @@
                                                   kernel-load-u8-16k kernel-store-u8
                                                   kernel-store-u8-4k kernel-load-u32 kernel-store-u32
                                                   kernel-boot-info kernel-read-cr2
+                                                  kernel-read-cr0 kernel-write-cr0
                                                   kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                                                   kernel-cli kernel-sti kernel-hlt kernel-pause
                                                   kernel-out-u8 kernel-out-u32
@@ -1439,7 +1442,8 @@
   (let [kernel-operations '#{kernel-load-u8 kernel-load-u8-4k kernel-load-u8-16k
                              kernel-store-u8 kernel-store-u8-4k kernel-read-cr2
                              kernel-load-u32 kernel-store-u32
-                             kernel-boot-info kernel-read-cr3 kernel-write-cr3 kernel-invlpg
+                             kernel-boot-info kernel-read-cr0 kernel-write-cr0
+                             kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                              kernel-cli kernel-sti kernel-hlt kernel-pause
                              kernel-out-u8 kernel-out-u32
                              kernel-in-u8 kernel-in-u32
