@@ -162,6 +162,7 @@
 (def ^:private decimal-operations '{decimal-f64-parse 1 decimal-f64x3-parse 1})
 (def ^:private string-literal-byte-limit 4096)
 (def ^:private max-record-fields 32)
+(def ^:private max-record-nesting-depth 32)
 
 ;; Independently re-derived from `kotoba.kir/native-scalar-record-type?`
 ;; ON PURPOSE -- this verifier is a from-scratch re-check of the embedded
@@ -184,26 +185,27 @@
 (declare native-scalar-record-type?)
 (declare native-word-value-type?)
 
-(defn- native-scalar-record-type? [type]
-  (and (vector? type) (= 3 (count type)) (= :record (first type))
-       (keyword? (second type)) (some? (namespace (second type)))
-       (vector? (nth type 2)) (seq (nth type 2)) (<= (count (nth type 2)) max-record-fields)
-       (every? (fn [field]
-                 (and (vector? field) (= 2 (count field)) (keyword? (first field))
-                      ;; A record field may itself be a record: the backends
-                      ;; flatten it into the enclosing record's slots,
-                      ;; recursively, so nothing gains a runtime representation.
-                      (or (contains? native-word-field-types (second field))
-                          ;; An `[:option T]`/`[:result T E]` field already
-                          ;; travels as ONE word (the pair handle), so it fills a
-                          ;; single flattened slot exactly like the scalar field
-                          ;; types above and needs no representation the record
-                          ;; lowering lacks. Independently re-derived here rather
-                          ;; than imported, same as everything else in this ns.
-                          (native-word-value-type? (second field))
-                          (native-scalar-record-type? (second field)))))
-               (nth type 2))
-       (= (count (nth type 2)) (count (distinct (map first (nth type 2)))))))
+(defn- native-scalar-record-type?
+  ([type] (native-scalar-record-type? type 0))
+  ([type depth]
+   (and (< depth max-record-nesting-depth)
+        (vector? type) (= 3 (count type)) (= :record (first type))
+        (keyword? (second type)) (some? (namespace (second type)))
+        (vector? (nth type 2)) (seq (nth type 2))
+        (<= (count (nth type 2)) max-record-fields)
+        (every? (fn [field]
+                  (and (vector? field) (= 2 (count field)) (keyword? (first field))
+                       ;; ABI v6 represents a nested record as one pair-chain
+                       ;; handle. Re-derive the producer's depth bound here;
+                       ;; importing its predicate would defeat verification.
+                       (or (contains? native-word-field-types (second field))
+                           ;; An `[:option T]`/`[:result T E]` field already
+                           ;; travels as ONE word (the pair handle).
+                           (native-word-value-type? (second field))
+                           (native-scalar-record-type? (second field) (inc depth)))))
+                (nth type 2))
+        (= (count (nth type 2))
+           (count (distinct (map first (nth type 2))))))))
 
 ;; Independently re-derived from `kotoba.kir/native-scalar-variant-
 ;; type?` ON PURPOSE, same reasoning as `native-scalar-record-type?`'s own

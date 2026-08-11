@@ -47,10 +47,12 @@
                      :spill-live-values-across-call
                      :parallel-argument-assignment
                      :single-word-return-register}]
-    (is (= 5 (:abi/version aggregate-abi/contract)))
+    (is (= 6 (:abi/version aggregate-abi/contract)))
     (is (= :pair-chain-handle (:boundary/results plan)))
     (is (= :host-context (:boundary/ownership plan)))
     (is (= 4096 (:boundary/arena-cell-limit plan)))
+    (is (= :recursive-word-handles (:boundary/field-representation plan)))
+    (is (= 32 (:boundary/max-nesting-depth plan)))
     (is (= :admitted (:boundary/extracted-admission plan)))
     (is (#'kotoba.verifier/native-boundary-type? record-type)
         "the established boxed record boundary remains independently admitted")
@@ -72,6 +74,41 @@
     (is (not (#'kotoba.verifier/native-boundary-type?
               [:record :t/duplicate [[:value :i64] [:value :bool]]]))
         "the contract cannot widen the verifier's independently derived set")))
+
+(deftest recursive-record-boundary-is-independently-depth-bounded
+  (let [nested (fn [depth]
+                 (reduce (fn [field-type index]
+                           [:record (keyword "verified" (str "level-" index))
+                            [[:value field-type]]])
+                         :i64
+                         (range depth)))]
+    (is (#'kotoba.verifier/native-boundary-type? (nested 32)))
+    (is (not (#'kotoba.verifier/native-boundary-type? (nested 33))))))
+
+(deftest recursive-record-program-is-independently-verified-and-reemitted
+  (let [inner [:record :verified/inner [[:left :i64] [:right :i64]]]
+        outer [:record :verified/outer [[:inner inner] [:bonus :i64]]]
+        value (list 'record-new outer (list 'record-new inner 4 5) 6)
+        program {:format :kotoba.kir/v4
+                 :entry 'main :exports ['main]
+                 :signature {:params [] :result :i64}
+                 :effects #{}
+                 :functions
+                 [{:name 'main :params [] :param-types [] :result :i64
+                   :effects #{}
+                   :body (list 'let ['value value]
+                               (list '+
+                                     (list 'record-get inner
+                                           (list 'record-get outer 'value :inner)
+                                           :left)
+                                     (list 'record-get inner
+                                           (list 'record-get outer 'value :inner)
+                                           :right)
+                                     (list 'record-get outer 'value :bonus)))}]}
+        sealed (native-artifact program)]
+    (is (= 15 (:value sealed)))
+    (is (= program (#'kotoba.verifier/verify-program! program)))
+    (is (= sealed (kotoba.verifier/verify-artifact! sealed)))))
 
 (deftest scalar-direct-call-is-reemitted-by-the-pinned-production-backend
   (let [program {:format :kotoba.kir/v3

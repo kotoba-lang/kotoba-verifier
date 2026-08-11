@@ -12,17 +12,18 @@
         ;; put the disagreement inside this repo's own closure.
         ;;
         ;; This pin contains scalar replacement for fixed scalar records and
-        ;; variants, aggregate ABI v5, liveness-minimal scalar calls,
+        ;; variants, aggregate ABI v6 recursive record handles,
+        ;; liveness-minimal scalar calls,
         ;; parallel function entry, and bounded lazy entry spills. It also
         ;; carries the word/f64, bounded-memory, runtime/capability-call,
         ;; composite-value, immutable-data, and x86 privileged migrations.
-        ;; Scalar records and i64/bool variants use checked pair boundaries;
-        ;; unsupported non-scalar aggregate shapes fail closed.
+        ;; Flat and nested records plus i64/bool variants use checked pair
+        ;; boundaries; unsupported aggregate shapes fail closed.
         ;; Verification therefore re-emits with the exact producer
         ;; implementation whose KIR slice is admitted here.
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
-         :git/sha "cf683988da0f8747cbbaa518de7f4fe8b9774fbf"}
+         :git/sha "8b1e22c9fb645e38ce16c3f2e24fc10468eba14d"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}
