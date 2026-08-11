@@ -598,7 +598,7 @@
   (let [kir-admits? (fn [type] (boolean (#'kotoba.kir/native-boundary-type? type {})))
         ours? (fn [type] (boolean (#'kotoba.verifier/native-boundary-type? type)))]
     (testing "every other boundary type agrees, so the divergence is exactly one type"
-      (doseq [type [:i64 :string :keyword
+      (doseq [type [:i64 :string :keyword :option-i64 :result-i64
                     [:option :bool] [:option :i64] [:result :bool :i64]
                     [:record :t/r [[:a :bool] [:b :i64]]]
                     :f64 :f32 :bytes :map :vector-i64 nil "bool"]]

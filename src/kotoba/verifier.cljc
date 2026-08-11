@@ -210,7 +210,7 @@
   ([type] (native-word-value-type? type 0))
   ([type depth]
    (and (<= depth 8)
-        (or (contains? #{:i64 :bool :string} type)
+        (or (contains? #{:i64 :bool :string :option-i64 :result-i64} type)
             (and (vector? type)
                  (case (first type)
                    :option (and (= 2 (count type))
