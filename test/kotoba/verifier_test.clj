@@ -137,6 +137,57 @@
                               (:mc/instructions callee))))
             target)))))
 
+(deftest pinned-producer-lazily-spills-only-the-fifth-entry-argument
+  (let [kir {:format :kotoba.kir/v4
+             :exports ['main]
+             :functions
+             [{:name 'sum-five :params ['a 'b 'c 'd 'e] :result :i64
+               :body '(+ (+ (+ a b) (+ c d)) e)}
+              {:name 'main :params ['a 'b 'c 'd 'e] :result :i64
+               :body '(sum-five a b c d e)}]}]
+    (doseq [target [:x86-64 :aarch64]]
+      (let [[callee caller]
+            (:mc/functions (->> kir machine/lower-kir-module
+                                (machine/compile-gmir target)))
+            functions [callee caller]
+            argument-encoding (keyword (name target) "argument")
+            store-encoding (keyword (name target) "spill-store")
+            load-encoding (keyword (name target) "spill-load")
+            call-encoding (keyword (name target) "call")
+            expected-inputs (if (= :x86-64 target)
+                              [:x86-64/rdi :x86-64/rsi :x86-64/rdx
+                               :x86-64/rcx :x86-64/r8]
+                              [:aarch64/x0 :aarch64/x1 :aarch64/x2
+                               :aarch64/x3 :aarch64/x4])
+            fifth-input (expected-inputs 4)
+            caller-instructions (:mc/instructions caller)
+            call-index (first (keep-indexed
+                               (fn [index instruction]
+                                 (when (= call-encoding (:mc/encoding instruction))
+                                   index))
+                               caller-instructions))]
+        (is (= [:allocator :call-live]
+               (mapv :mc/frame-policy functions)) target)
+        (is (= [1 1] (mapv :mc/frame-slots functions)) target)
+        (doseq [function functions]
+          (let [instructions (:mc/instructions function)
+                stores (filterv #(= store-encoding (:mc/encoding %)) instructions)
+                loads (filterv #(= load-encoding (:mc/encoding %)) instructions)]
+            (is (= expected-inputs
+                   (mapv :mir/dst
+                         (filter #(= argument-encoding (:mc/encoding %))
+                                 instructions)))
+                [target (:mc/name function)])
+            (is (= [{:mc/op :mc/instruction :mc/encoding store-encoding
+                     :mir/src fifth-input :mir/slot 0}]
+                   stores) [target (:mc/name function)])
+            (is (= 1 (count loads)) [target (:mc/name function)])
+            (is (= 0 (:mir/slot (first loads)))
+                [target (:mc/name function)])))
+        (is (= {:mc/op :mc/instruction :mc/encoding load-encoding
+                :mir/dst fifth-input :mir/slot 0}
+               (get caller-instructions (dec call-index))) target)))))
+
 (defn- vector-fixture []
   (edn/read-string (slurp (io/resource "conformance/dual-surface-v1.edn"))))
 
