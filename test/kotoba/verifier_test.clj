@@ -858,6 +858,20 @@
     (is (nil? (variant-outcome
                (list 'let ['v constructor] (match-variant 'v)))))))
 
+(deftest a-local-record-payload-variant-may-be-boxed-bound-and-matched
+  (let [record-type '[:record :t/pair [[:left :i64] [:right :i64]]]
+        variant-type `[:variant :t/record-or-count
+                       [[:record ~record-type] [:count :i64]]]
+        constructed (list 'variant-new variant-type :record
+                          (list 'record-new record-type 20 22))
+        matched (list 'variant-match variant-type 'value
+                      [[:record 'payload
+                        (list '+
+                              (list 'record-get record-type 'payload :left)
+                              (list 'record-get record-type 'payload :right))]
+                       [:count 'payload 'payload]])]
+    (is (nil? (variant-outcome (list 'let ['value constructed] matched))))))
+
 (deftest a-same-schema-scalar-variant-if-may-be-matched
   (let [variant-if (list 'if 1
                          (list 'variant-new scalar-variant :number 41)
