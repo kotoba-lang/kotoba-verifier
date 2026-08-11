@@ -170,7 +170,7 @@
             argument-encoding (keyword (name target) "argument")
             store-encoding (keyword (name target) "spill-store")
             load-encoding (keyword (name target) "spill-load")
-            call-encoding (keyword (name target) "call")
+            tail-call-encoding (keyword (name target) "tail-call")
             expected-inputs (if (= :x86-64 target)
                               [:x86-64/rdi :x86-64/rsi :x86-64/rdx
                                :x86-64/rcx :x86-64/r8]
@@ -178,11 +178,12 @@
                                :aarch64/x3 :aarch64/x4])
             fifth-input (expected-inputs 4)
             caller-instructions (:mc/instructions caller)
-            call-index (first (keep-indexed
-                               (fn [index instruction]
-                                 (when (= call-encoding (:mc/encoding instruction))
-                                   index))
-                               caller-instructions))]
+            transfer-index (first (keep-indexed
+                                   (fn [index instruction]
+                                     (when (= tail-call-encoding
+                                              (:mc/encoding instruction))
+                                       index))
+                                   caller-instructions))]
         (is (= [:allocator :call-live]
                (mapv :mc/frame-policy functions)) target)
         (is (= [1 1] (mapv :mc/frame-slots functions)) target)
@@ -203,7 +204,9 @@
                 [target (:mc/name function)])))
         (is (= {:mc/op :mc/instruction :mc/encoding load-encoding
                 :mir/dst fifth-input :mir/slot 0}
-               (get caller-instructions (dec call-index))) target)))))
+               (get caller-instructions (dec transfer-index))) target)
+        (is (= tail-call-encoding
+               (:mc/encoding (get caller-instructions transfer-index))) target)))))
 
 (defn- vector-fixture []
   (edn/read-string (slurp (io/resource "conformance/dual-surface-v1.edn"))))
