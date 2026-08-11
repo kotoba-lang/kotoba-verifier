@@ -384,6 +384,11 @@
   (and (native-scalar-variant-type? type)
        (every? #(contains? #{:i64 :bool} (second %)) (nth type 2))))
 
+(defn- boxed-aggregate-variant-type? [type]
+  (and (native-scalar-variant-boundary-type? type)
+       (boolean (some #(native-scalar-record-type? (second %))
+                      (nth type 2)))))
+
 ;; A value-position IF may transport an SROA bundle only when both branches
 ;; construct the same exact record type. Conditions stay scalar and are checked
 ;; separately by `verify-expr!`. Do not resolve symbols here: forwarding a
@@ -400,7 +405,8 @@
 (defn- variant-new-schema [value]
   (when (and (seq? value) (= 'variant-new (first value)) (= 4 (count value)))
     (let [[_ type tag _payload] value]
-      (when (and (scalar-replaced-variant-type? type)
+      (when (and (or (scalar-replaced-variant-type? type)
+                     (boxed-aggregate-variant-type? type))
                  (some #(= tag (first %)) (nth type 2)))
         type))))
 
