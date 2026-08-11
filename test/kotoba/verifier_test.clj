@@ -47,15 +47,15 @@
                      :spill-live-values-across-call
                      :parallel-argument-assignment
                      :single-word-return-register}]
-    (is (= 3 (:abi/version aggregate-abi/contract)))
+    (is (= 5 (:abi/version aggregate-abi/contract)))
     (is (= :pair-chain-handle (:boundary/results plan)))
     (is (= :host-context (:boundary/ownership plan)))
     (is (= 4096 (:boundary/arena-cell-limit plan)))
-    (is (= :held (:boundary/extracted-admission plan)))
+    (is (= :admitted (:boundary/extracted-admission plan)))
     (is (#'kotoba.verifier/native-boundary-type? record-type)
         "the established boxed record boundary remains independently admitted")
-    (is (= :held (get-in aggregate-abi/contract
-                         [:extracted :record-boundary])))
+    (is (= :word-pair-chain-admitted
+           (get-in aggregate-abi/contract [:extracted :record-boundary])))
     (is (= :scalar-pair-handle-admitted
            (get-in aggregate-abi/contract [:extracted :variant-boundary])))
     (is (= :scalar-admitted (get-in aggregate-abi/contract
