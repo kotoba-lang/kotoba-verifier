@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. The four-argument gate remains current; ADR 0013 adds the bounded
+five-argument gate.
 
 ## Decision
 

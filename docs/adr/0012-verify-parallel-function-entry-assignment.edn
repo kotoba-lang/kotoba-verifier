@@ -1,5 +1,6 @@
 {:adr/id 12
  :adr/status :accepted
+ :adr/extended-by 13
  :decision :verify-parallel-function-entry-assignment
  :producer {:repository "kotoba-lang/kotoba-native"
             :revision "7f2120deade9425d7920689b88119790f4bdcea9"}

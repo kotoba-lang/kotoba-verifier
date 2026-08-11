@@ -34,7 +34,9 @@ the pinned production emitter and checks that its representative caller uses
 the liveness-minimal `:call-live` policy with one slot, save, and reload.
 It also gates the pinned producer's function-entry ABI: four live scalar
 parameters must retain exact ABI markers and reach both native ISAs with zero
-frame slots and no spill operations.
+frame slots and no spill operations. Five live scalar parameters must retain
+the five exact markers while using one bounded entry slot, one direct store,
+and one lazy load in each function rather than the all-vreg policy.
 Reading this producer contract does not widen
 the verifier's independently derived record or variant predicates.
 
