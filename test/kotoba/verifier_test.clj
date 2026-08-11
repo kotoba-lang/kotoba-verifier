@@ -23,6 +23,23 @@
 
 (declare native-artifact)
 
+(deftest native-clock-provider-contract-is-independently-sealed
+  (let [request [:variant :kotoba.clock/request
+                 [[:wall :bool] [:monotonic :bool]]]
+        result [:variant :kotoba.clock/result
+                [[:wall [:record :kotoba.clock/wall
+                         [[:unix-millis :i64] [:observation-sequence :i64]]]]
+                 [:monotonic [:record :kotoba.clock/monotonic
+                              [[:nanos :i64] [:observation-sequence :i64]]]]
+                 [:error [:record :kotoba.clock/error
+                          [[:code :keyword] [:message :string]]]]]]]
+    (is (#'kotoba.verifier/native-provider-contract? 7 request result))
+    (is (not (#'kotoba.verifier/native-provider-contract? 8 request result)))
+    (is (not (#'kotoba.verifier/native-provider-contract?
+              7 (assoc request 1 :other/request) result)))
+    (is (not (#'kotoba.verifier/native-provider-contract?
+              7 request (update-in result [2] #(vec (reverse %))))))))
+
 (deftest aggregate-boundary-contract-does-not-widen-verifier-admission
   (let [record-type [:record :t/pair [[:left :i64] [:ready :bool]]]
         plan (aggregate-abi/record-boundary-plan record-type)
