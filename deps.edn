@@ -11,19 +11,17 @@
         ;; shape while pinned to a backend that refuses or miscompiles it would
         ;; put the disagreement inside this repo's own closure.
         ;;
-        ;; This pin contains scalar replacement for non-escaping fixed
-        ;; i64/bool records and sealed i64/bool-payload variants, plus the
-        ;; versioned aggregate boundary contract that admits scalar direct
-        ;; calls only after explicit frame/clobber prerequisites are present,
-        ;; materializes only values live across straight-line calls, assigns
-        ;; function-entry ABI inputs as one parallel-copy group, and lazily
-        ;; spills only inputs beyond the four-register allocator profile.
-        ;; Record and variant values remain held at extracted boundaries.
+        ;; This pin contains scalar replacement for non-escaping fixed records
+        ;; and variants, aggregate ABI v3, liveness-minimal scalar calls,
+        ;; parallel function entry, and bounded lazy entry spills. It also
+        ;; carries the word/f64, bounded-memory, runtime/capability-call,
+        ;; composite-value, and immutable-data migrations. Escaping records
+        ;; remain held; scalar i64/bool variants use the checked pair boundary.
         ;; Verification therefore re-emits with the exact producer
         ;; implementation whose KIR slice is admitted here.
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
-         :git/sha "c52010003ac525855c3df3ec35dde88a2006b196"}
+         :git/sha "f56683da953755661f2fd70c7c0e744dc10feabc"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}
