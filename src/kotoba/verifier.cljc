@@ -919,8 +919,11 @@
 
         (contains? '#{kernel-boot-info kernel-read-cr0 kernel-write-cr0
                       kernel-read-cr2 kernel-read-cr3 kernel-write-cr3 kernel-invlpg
-                      kernel-read-cs kernel-page-fault-handler-address kernel-load-idt
+                      kernel-read-cs kernel-page-fault-handler-address
+                      kernel-page-fault-recovery-handler-address
+                      kernel-configure-page-fault-recovery kernel-load-idt
                       kernel-probe-guard-write kernel-probe-text-write kernel-probe-nx-execute
+                      kernel-probe-recoverable-guard-write
                       kernel-cli kernel-sti kernel-hlt kernel-pause
                       kernel-out-u8 kernel-out-u32
                       kernel-in-u8 kernel-in-u32
@@ -948,8 +951,11 @@
                          'kernel-read-cr2 0 'kernel-read-cr3 0 'kernel-write-cr3 1
                          'kernel-invlpg 1 'kernel-cli 0 'kernel-sti 0 'kernel-hlt 0
                          'kernel-read-cs 0 'kernel-page-fault-handler-address 0
+                         'kernel-page-fault-recovery-handler-address 0
+                         'kernel-configure-page-fault-recovery 2
                          'kernel-load-idt 2 'kernel-probe-guard-write 0
                          'kernel-probe-text-write 0 'kernel-probe-nx-execute 0
+                         'kernel-probe-recoverable-guard-write 0
                          'kernel-pause 0 'kernel-out-u8 2 'kernel-out-u32 2
                          'kernel-in-u8 1 'kernel-in-u32 1
                          'kernel-read-msr 1 'kernel-write-msr 2
@@ -1331,8 +1337,11 @@
                                                   kernel-read-cr0 kernel-write-cr0
                                                   kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                                                   kernel-read-cs kernel-page-fault-handler-address
+                                                  kernel-page-fault-recovery-handler-address
+                                                  kernel-configure-page-fault-recovery
                                                   kernel-load-idt kernel-probe-guard-write
                                                   kernel-probe-text-write kernel-probe-nx-execute
+                                                  kernel-probe-recoverable-guard-write
                                                   kernel-cli kernel-sti kernel-hlt kernel-pause
                                                   kernel-out-u8 kernel-out-u32
                                                   kernel-in-u8 kernel-in-u32
@@ -1452,8 +1461,11 @@
                              kernel-load-u32 kernel-store-u32
                              kernel-boot-info kernel-read-cr0 kernel-write-cr0
                              kernel-read-cr3 kernel-write-cr3 kernel-invlpg
-                             kernel-read-cs kernel-page-fault-handler-address kernel-load-idt
+                             kernel-read-cs kernel-page-fault-handler-address
+                             kernel-page-fault-recovery-handler-address
+                             kernel-configure-page-fault-recovery kernel-load-idt
                              kernel-probe-guard-write kernel-probe-text-write kernel-probe-nx-execute
+                             kernel-probe-recoverable-guard-write
                              kernel-cli kernel-sti kernel-hlt kernel-pause
                              kernel-out-u8 kernel-out-u32
                              kernel-in-u8 kernel-in-u32
