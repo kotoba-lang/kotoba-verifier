@@ -922,8 +922,10 @@
                       kernel-read-cs kernel-page-fault-handler-address
                       kernel-page-fault-recovery-handler-address
                       kernel-configure-page-fault-recovery kernel-load-idt
+                      kernel-double-fault-handler-address
+                      kernel-configure-double-fault-ist kernel-load-gdt-tss
                       kernel-probe-guard-write kernel-probe-text-write kernel-probe-nx-execute
-                      kernel-probe-recoverable-guard-write
+                      kernel-probe-recoverable-guard-write kernel-probe-double-fault
                       kernel-cli kernel-sti kernel-hlt kernel-pause
                       kernel-out-u8 kernel-out-u32
                       kernel-in-u8 kernel-in-u32
@@ -953,9 +955,12 @@
                          'kernel-read-cs 0 'kernel-page-fault-handler-address 0
                          'kernel-page-fault-recovery-handler-address 0
                          'kernel-configure-page-fault-recovery 2
+                         'kernel-double-fault-handler-address 0
+                         'kernel-configure-double-fault-ist 2
+                         'kernel-load-gdt-tss 2
                          'kernel-load-idt 2 'kernel-probe-guard-write 0
                          'kernel-probe-text-write 0 'kernel-probe-nx-execute 0
-                         'kernel-probe-recoverable-guard-write 0
+                         'kernel-probe-recoverable-guard-write 0 'kernel-probe-double-fault 0
                          'kernel-pause 0 'kernel-out-u8 2 'kernel-out-u32 2
                          'kernel-in-u8 1 'kernel-in-u32 1
                          'kernel-read-msr 1 'kernel-write-msr 2
@@ -1339,9 +1344,13 @@
                                                   kernel-read-cs kernel-page-fault-handler-address
                                                   kernel-page-fault-recovery-handler-address
                                                   kernel-configure-page-fault-recovery
+                                                  kernel-double-fault-handler-address
+                                                  kernel-configure-double-fault-ist
+                                                  kernel-load-gdt-tss
                                                   kernel-load-idt kernel-probe-guard-write
                                                   kernel-probe-text-write kernel-probe-nx-execute
                                                   kernel-probe-recoverable-guard-write
+                                                  kernel-probe-double-fault
                                                   kernel-cli kernel-sti kernel-hlt kernel-pause
                                                   kernel-out-u8 kernel-out-u32
                                                   kernel-in-u8 kernel-in-u32
@@ -1464,8 +1473,10 @@
                              kernel-read-cs kernel-page-fault-handler-address
                              kernel-page-fault-recovery-handler-address
                              kernel-configure-page-fault-recovery kernel-load-idt
+                             kernel-double-fault-handler-address
+                             kernel-configure-double-fault-ist kernel-load-gdt-tss
                              kernel-probe-guard-write kernel-probe-text-write kernel-probe-nx-execute
-                             kernel-probe-recoverable-guard-write
+                             kernel-probe-recoverable-guard-write kernel-probe-double-fault
                              kernel-cli kernel-sti kernel-hlt kernel-pause
                              kernel-out-u8 kernel-out-u32
                              kernel-in-u8 kernel-in-u32
