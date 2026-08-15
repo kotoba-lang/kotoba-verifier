@@ -908,6 +908,57 @@
                     (list 'variant-new scalar-variant :number 1)
                     [[:flag 'x 0] [:number 'x 'x]])))))))
 
+(def ^:private clock-request
+  [:variant :kotoba.clock/request [[:wall :bool] [:monotonic :bool]]])
+(def ^:private clock-wall
+  [:record :kotoba.clock/wall
+   [[:unix-millis :i64] [:observation-sequence :i64]]])
+(def ^:private clock-monotonic
+  [:record :kotoba.clock/monotonic
+   [[:nanos :i64] [:observation-sequence :i64]]])
+(def ^:private clock-error
+  [:record :kotoba.clock/error [[:code :keyword] [:message :string]]])
+(def ^:private clock-result
+  [:variant :kotoba.clock/result
+   [[:wall clock-wall] [:monotonic clock-monotonic] [:error clock-error]]])
+
+(defn- clock-program [body]
+  (-> ok-program
+      (assoc :format :kotoba.kir/v4 :effects #{[:cap/call 7]})
+      (assoc-in [:functions 0 :effects] #{[:cap/call 7]})
+      (assoc-in [:functions 0 :body] body)))
+
+(defn- clock-match [value]
+  (list 'variant-match clock-result value
+        [[:wall 'w (list 'record-get clock-wall 'w :unix-millis)]
+         [:monotonic 'm (list 'record-get clock-monotonic 'm :nanos)]
+         [:error 'e 0]]))
+
+(deftest clock-typed-cap-call-result-may-be-matched
+  (let [call (list 'typed-cap-call 7 clock-request clock-result
+                   (list 'variant-new clock-request :wall false))
+        program (clock-program (clock-match call))
+        sealed (native-artifact program)]
+    (is (= program (#'kotoba.verifier/verify-program! program)))
+    (is (= sealed (kotoba.verifier/verify-artifact! sealed)))
+    (is (= (clock-program (list 'let ['answer call] (clock-match 'answer)))
+           (#'kotoba.verifier/verify-program!
+            (clock-program (list 'let ['answer call] (clock-match 'answer))))))))
+
+(deftest clock-typed-cap-call-match-stays-fail-closed
+  (is (= "runtime KIR variant dispatch rejected"
+         (variant-outcome
+          (clock-match (list 'variant-new clock-request :wall false))))
+      "a clock request cannot impersonate a clock result at match")
+  (is (= "runtime KIR variant dispatch rejected"
+         (try (#'kotoba.verifier/verify-program!
+               (clock-program
+                (clock-match (list 'typed-cap-call 7 clock-request scalar-variant
+                                   (list 'variant-new clock-request :wall false)))))
+              nil
+              (catch clojure.lang.ExceptionInfo e (ex-message e))))
+      "a non-clock typed-cap-call result is not a clock-v1 match operand"))
+
 (defn- variant-boundary-program [body]
   {:format :kotoba.kir/v4
    :entry nil
