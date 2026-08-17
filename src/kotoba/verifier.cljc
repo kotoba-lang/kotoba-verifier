@@ -126,10 +126,35 @@
     [:error [:record :kotoba.clock/error
              [[:code :keyword] [:message :string]]]]]])
 
+(def ^:private native-dataspace-request-type
+  [:variant :kotoba.dataspace/request
+   [[:assert [:record :kotoba.dataspace/assert
+              [[:assertion :document] [:facet :i64]]]]
+    [:retract [:record :kotoba.dataspace/retract
+               [[:assertion :document] [:facet :i64]]]]
+    [:observe [:record :kotoba.dataspace/observe
+               [[:pattern :document] [:facet :i64]]]]
+    [:facet-enter :bool]
+    [:facet-leave :i64]]])
+
+(def ^:private native-dataspace-result-type
+  [:variant :kotoba.dataspace/result
+   [[:asserted [:record :kotoba.dataspace/asserted
+                [[:count :i64] [:notices :document]]]]
+    [:retracted [:record :kotoba.dataspace/retracted [[:count :i64]]]]
+    [:matches [:record :kotoba.dataspace/matches
+               [[:bindings :document] [:notices :document]]]]
+    [:facet [:record :kotoba.dataspace/facet [[:id :i64]]]]
+    [:error [:record :kotoba.dataspace/error
+             [[:code :keyword] [:message :string]]]]]])
+
 (defn- native-provider-contract? [cap-id request-type result-type]
-  (and (= 7 cap-id)
-       (= native-clock-request-type request-type)
-       (= native-clock-result-type result-type)))
+  (or (and (= 7 cap-id)
+           (= native-clock-request-type request-type)
+           (= native-clock-result-type result-type))
+      (and (= 24 cap-id)
+           (= native-dataspace-request-type request-type)
+           (= native-dataspace-result-type result-type))))
 ;; `vector-i64` / `vector-f64` (ADR-2608030300). Admitted here as the
 ;; target-independent operations they are, with their KIR arities -- the same
 ;; stance `string-operations` above takes, and for the same reason: a backend
@@ -180,7 +205,7 @@
 ;; `:f64` is excluded because the compiler rejects any f64 on native
 ;; independently of records; `:keyword` because the backends have no keyword
 ;; representation at all.
-(def ^:private native-word-field-types #{:i64 :bool :string :keyword})
+(def ^:private native-word-field-types #{:i64 :bool :string :keyword :document})
 
 (declare native-scalar-record-type?)
 (declare native-word-value-type?)
@@ -243,7 +268,8 @@
   ([type] (native-word-value-type? type 0))
   ([type depth]
    (and (<= depth 8)
-        (or (contains? #{:i64 :bool :string :option-i64 :result-i64} type)
+        (or (contains? #{:i64 :bool :string :keyword :document
+                         :option-i64 :result-i64} type)
             (and (vector? type)
                  (case (first type)
                    :option (and (= 2 (count type))
@@ -851,6 +877,13 @@
         (do
           (when-not (= (get kgraph-operations op) (count args))
             (reject! "runtime KIR kgraph operation arity rejected" {:operation op}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        (contains? '#{document-edn-read document-edn-print} op)
+        (do
+          (when-not (= 1 (count args))
+            (reject! "runtime KIR document-edn operation arity rejected"
+                     {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
         (contains? string-operations op)
