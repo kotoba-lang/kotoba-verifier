@@ -40,6 +40,29 @@
     (is (not (#'kotoba.verifier/native-provider-contract?
               7 request (update-in result [2] #(vec (reverse %))))))))
 
+(deftest native-dataspace-provider-contract-is-independently-sealed
+  (let [request [:variant :kotoba.dataspace/request
+                 [[:assert [:record :kotoba.dataspace/assert
+                            [[:assertion :document] [:facet :i64]]]]
+                  [:retract [:record :kotoba.dataspace/retract
+                             [[:assertion :document] [:facet :i64]]]]
+                  [:observe [:record :kotoba.dataspace/observe
+                             [[:pattern :document] [:facet :i64]]]]
+                  [:facet-enter :bool]
+                  [:facet-leave :i64]]]
+        result [:variant :kotoba.dataspace/result
+                [[:asserted [:record :kotoba.dataspace/asserted
+                             [[:count :i64] [:notices :document]]]]
+                 [:retracted [:record :kotoba.dataspace/retracted [[:count :i64]]]]
+                 [:matches [:record :kotoba.dataspace/matches
+                            [[:bindings :document] [:notices :document]]]]
+                 [:facet [:record :kotoba.dataspace/facet [[:id :i64]]]]
+                 [:error [:record :kotoba.dataspace/error
+                          [[:code :keyword] [:message :string]]]]]]]
+    (is (#'kotoba.verifier/native-provider-contract? 24 request result))
+    (is (not (#'kotoba.verifier/native-provider-contract? 7 request result)))
+    (is (not (#'kotoba.verifier/native-provider-contract? 24 request request)))))
+
 (deftest aggregate-boundary-contract-does-not-widen-verifier-admission
   (let [record-type [:record :t/pair [[:left :i64] [:ready :bool]]]
         plan (aggregate-abi/record-boundary-plan record-type)
