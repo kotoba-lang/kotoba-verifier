@@ -931,6 +931,105 @@
                     (list 'variant-new scalar-variant :number 1)
                     [[:flag 'x 0] [:number 'x 'x]])))))))
 
+(def ^:private clock-request
+  [:variant :kotoba.clock/request [[:wall :bool] [:monotonic :bool]]])
+(def ^:private clock-wall
+  [:record :kotoba.clock/wall
+   [[:unix-millis :i64] [:observation-sequence :i64]]])
+(def ^:private clock-monotonic
+  [:record :kotoba.clock/monotonic
+   [[:nanos :i64] [:observation-sequence :i64]]])
+(def ^:private clock-error
+  [:record :kotoba.clock/error [[:code :keyword] [:message :string]]])
+(def ^:private clock-result
+  [:variant :kotoba.clock/result
+   [[:wall clock-wall] [:monotonic clock-monotonic] [:error clock-error]]])
+
+(def ^:private dataspace-request
+  [:variant :kotoba.dataspace/request
+   [[:assert [:record :kotoba.dataspace/assert
+              [[:assertion :document] [:facet :i64]]]]
+    [:retract [:record :kotoba.dataspace/retract
+               [[:assertion :document] [:facet :i64]]]]
+    [:observe [:record :kotoba.dataspace/observe
+               [[:pattern :document] [:facet :i64]]]]
+    [:facet-enter :bool]
+    [:facet-leave :i64]]])
+(def ^:private dataspace-asserted
+  [:record :kotoba.dataspace/asserted [[:count :i64] [:notices :document]]])
+(def ^:private dataspace-retracted
+  [:record :kotoba.dataspace/retracted [[:count :i64]]])
+(def ^:private dataspace-matches
+  [:record :kotoba.dataspace/matches
+   [[:bindings :document] [:notices :document]]])
+(def ^:private dataspace-facet
+  [:record :kotoba.dataspace/facet [[:id :i64]]])
+(def ^:private dataspace-error
+  [:record :kotoba.dataspace/error [[:code :keyword] [:message :string]]])
+(def ^:private dataspace-result
+  [:variant :kotoba.dataspace/result
+   [[:asserted dataspace-asserted] [:retracted dataspace-retracted]
+    [:matches dataspace-matches] [:facet dataspace-facet]
+    [:error dataspace-error]]])
+
+(defn- provider-program [cap-id body]
+  (-> ok-program
+      (assoc :format :kotoba.kir/v4 :effects #{[:cap/call cap-id]})
+      (assoc-in [:functions 0 :effects] #{[:cap/call cap-id]})
+      (assoc-in [:functions 0 :body] body)))
+
+(defn- clock-match [value]
+  (list 'variant-match clock-result value
+        [[:wall 'w (list 'record-get clock-wall 'w :unix-millis)]
+         [:monotonic 'm (list 'record-get clock-monotonic 'm :nanos)]
+         [:error 'e 0]]))
+
+(defn- dataspace-match [value]
+  (list 'variant-match dataspace-result value
+        [[:asserted 'a (list 'record-get dataspace-asserted 'a :count)]
+         [:retracted 'r (list 'record-get dataspace-retracted 'r :count)]
+         [:matches 'm 0]
+         [:facet 'f (list 'record-get dataspace-facet 'f :id)]
+         [:error 'e 0]]))
+
+(deftest clock-typed-cap-call-result-may-be-matched
+  (let [call (list 'typed-cap-call 7 clock-request clock-result
+                   (list 'variant-new clock-request :wall false))
+        program (provider-program 7 (clock-match call))
+        sealed (native-artifact program)]
+    (is (= program (#'kotoba.verifier/verify-program! program)))
+    (is (= sealed (kotoba.verifier/verify-artifact! sealed)))
+    (is (= (provider-program 7 (list 'let ['answer call] (clock-match 'answer)))
+           (#'kotoba.verifier/verify-program!
+            (provider-program 7 (list 'let ['answer call] (clock-match 'answer))))))))
+
+(deftest dataspace-typed-cap-call-result-may-be-matched
+  (let [call (list 'typed-cap-call 24 dataspace-request dataspace-result
+                   (list 'variant-new dataspace-request :facet-enter false))
+        program (provider-program 24 (dataspace-match call))
+        bound (provider-program 24 (list 'let ['answer call]
+                                         (dataspace-match 'answer)))]
+    (is (= program (#'kotoba.verifier/verify-program! program)))
+    (is (= bound (#'kotoba.verifier/verify-program! bound)))))
+
+(deftest provider-typed-cap-call-match-stays-fail-closed
+  (is (= "runtime KIR variant dispatch rejected"
+         (variant-outcome
+          (clock-match (list 'variant-new clock-request :wall false))))
+      "a clock request cannot impersonate a clock result at match")
+  (is (= "runtime KIR variant dispatch rejected"
+         (try (#'kotoba.verifier/verify-program!
+               (provider-program 7
+                (clock-match (list 'typed-cap-call 7 clock-request scalar-variant
+                                   (list 'variant-new clock-request :wall false)))))
+              nil
+              (catch clojure.lang.ExceptionInfo e (ex-message e))))
+      "a non-clock typed-cap-call result is not a clock-v1 match operand")
+  (is (= "runtime KIR variant dispatch rejected"
+         (variant-outcome
+          (dataspace-match (list 'variant-new dataspace-request :facet-enter false))))
+      "a dataspace request cannot impersonate a dataspace result at match"))
+
 (defn- variant-boundary-program [body]
   {:format :kotoba.kir/v4
    :entry nil
