@@ -451,6 +451,17 @@
 
 (declare ^:dynamic *call-results*)
 
+(defn- provider-result-schema
+  "Result type of a sealed provider typed-cap-call (clock 7 or dataspace 24).
+
+  The host returns a nested pair handle, not a local SROA construction.
+  Matching that boundary is how a guest reads unix-millis or notices; it is
+  not a widening of local SROA. Same gate as clock-typed-cap-variant-match."
+  [form]
+  (when (and (seq? form) (= 'typed-cap-call (first form)) (= 5 (count form))
+             (native-provider-contract? (nth form 1) (nth form 2) (nth form 3)))
+    (nth form 3)))
+
 (defn- variant-schema-of [form locals]
   (cond
     ;; Preserve ADR 0063's broader legacy direct-match family.
@@ -460,6 +471,9 @@
 
     (and (seq? form) (= 'if (first form)))
     (variant-sroa-if-schema form)
+
+    (provider-result-schema form)
+    (provider-result-schema form)
 
     (symbol? form)
     (let [local (get locals form)]
@@ -567,7 +581,8 @@
 (defn- binding-local [value]
   (or (binding-record-schema value)
       (when-let [type (or (variant-new-schema value)
-                          (variant-sroa-if-schema value))]
+                          (variant-sroa-if-schema value)
+                          (provider-result-schema value))]
         (variant-local type))))
 
 (defn- verify-bindings! [bindings locals signatures depth nodes facts]
@@ -778,9 +793,10 @@
         ;; ADR 0063's legacy path accepts a directly nested construction. The
         ;; extracted producer additionally accepts one local scalar variant,
         ;; constructed directly or by a same-schema IF. `variant-schema-of`
-        ;; independently re-derives exactly those shapes; it never follows a
-        ;; second symbol binding or accepts a boundary value. Branches still
-        ;; exhaustively cover cases in ordinal order.
+        ;; independently re-derives those shapes, plus a sealed provider
+        ;; typed-cap-call result (clock 7 / dataspace 24 host pair handle,
+        ;; not local SROA). Branches still exhaustively cover cases in
+        ;; ordinal order.
         (= op 'variant-match)
         (let [[type value branches] args
               cases (when (native-scalar-variant-type? type) (nth type 2))
