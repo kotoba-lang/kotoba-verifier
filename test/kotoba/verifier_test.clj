@@ -609,7 +609,7 @@
                           '(:bool))))
         "the table must still be a vector")))
 
-(deftest native-vector-handles-are-private-function-boundaries-only
+(deftest native-vector-parameters-are-private-function-boundaries-only
   (doseq [vector-type [:vector-i64 :vector-f64]]
     (testing (name vector-type)
       (let [private-helper (-> (with-param-types [vector-type])
@@ -618,7 +618,28 @@
             "a private native call carries the context-owned handle as one word")
         (is (true? (function-rejected?
                     (update private-helper :exports conj 'helper)))
-            "a kexe export cannot accept or return an unmarshalable handle")))))
+            "copy ABI v1 still cannot accept a vector handle parameter")))))
+
+(deftest native-vector-results-have-a-non-entry-export-copy-boundary
+  (doseq [vector-type [:vector-i64 :vector-f64]]
+    (testing (name vector-type)
+      (let [exported-result (-> (with-param-types [])
+                                (assoc-in [:functions 1 :result] vector-type)
+                                (update :exports conj 'helper))]
+        (is (false? (function-rejected? exported-result)))
+        (is (= :signature-result
+               (shape-condition
+                (-> exported-result
+                    (assoc-in [:functions 0 :result] vector-type)
+                    (assoc :signature {:params [] :result vector-type}))))
+            "entry results remain outside copy ABI v1 at the module boundary")))))
+
+(deftest native-vector-export-copy-v1-is-zero-arity
+  (doseq [vector-type [:vector-i64 :vector-f64]]
+    (let [exported-result (-> (with-param-types [:i64])
+                              (assoc-in [:functions 1 :result] vector-type)
+                              (update :exports conj 'helper))]
+      (is (true? (function-rejected? exported-result))))))
 
 (deftest native-string-index-is-private-and-its-operations-are-sealed
   (let [private-helper (-> (with-param-types [:string-index])

@@ -1200,6 +1200,11 @@
   (or (native-boundary-type? type)
       (and (not exported?) (native-private-handle-type? type))))
 
+(defn- native-export-copy-result-type? [type]
+  ;; The backend/loader copy ABI v1 can marshal only a top-level vector result.
+  ;; It does not make a context handle public and does not admit parameters.
+  (contains? #{:vector-i64 :vector-f64} type))
+
 ;; Each shape condition is named so a rejection can say which one failed. The
 ;; whole set used to be one `and` reporting `{}`, which meant the most common
 ;; way to hit it -- an entry returning `:bool` -- surfaced as "module shape
@@ -1316,6 +1321,11 @@
                                ;; one word, built from the arena primitives
                                ;; already contracted here.
                                (or (contains? function-result-types (:result function))
+                                   (and exported?
+                                        (not= (:name function) (:entry program))
+                                        (empty? (:params function))
+                                        (native-export-copy-result-type?
+                                         (:result function)))
                                    (native-function-boundary-type?
                                     (:result function) exported?))
                                (or (not (contains? function :param-types))
