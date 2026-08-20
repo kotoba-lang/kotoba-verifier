@@ -955,14 +955,22 @@
             (reject! "runtime KIR decimal operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
+        ;; `kernel-try-lock-u32`/`kernel-unlock-u32` (amu#625) are members of
+        ;; this family, not a new one: same `base length index` shape, same
+        ;; bounds check, same arity 3 as the loads. Leaving them out would not
+        ;; have been a policy about atomics -- it would have been an
+        ;; inconsistency, since every other member of the family is admitted
+        ;; here and the verifier rejects by absence.
         (contains? '#{kernel-load-u8 kernel-load-u8-4k kernel-load-u8-16k
                       kernel-store-u8 kernel-store-u8-4k kernel-subregion
-                      kernel-load-u32 kernel-store-u32} op)
+                      kernel-load-u32 kernel-store-u32
+                      kernel-try-lock-u32 kernel-unlock-u32} op)
         (do
           (when-not (= ({'kernel-load-u8 3 'kernel-load-u8-4k 3
                          'kernel-load-u8-16k 3 'kernel-store-u8 4
                          'kernel-store-u8-4k 4 'kernel-subregion 4
-                         'kernel-load-u32 3 'kernel-store-u32 4} op) (count args))
+                         'kernel-load-u32 3 'kernel-store-u32 4
+                         'kernel-try-lock-u32 3 'kernel-unlock-u32 3} op) (count args))
             (reject! "runtime KIR kernel memory operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
