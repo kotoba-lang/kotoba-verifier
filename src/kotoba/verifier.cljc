@@ -899,16 +899,18 @@
 
         (contains? '#{kernel-load-u8 kernel-load-u8-4k kernel-load-u8-16k
                       kernel-store-u8 kernel-store-u8-4k kernel-subregion
-                      kernel-load-u32 kernel-store-u32} op)
+                      kernel-load-u32 kernel-store-u32
+                      kernel-compare-exchange-u32} op)
         (do
           (when-not (= ({'kernel-load-u8 3 'kernel-load-u8-4k 3
                          'kernel-load-u8-16k 3 'kernel-store-u8 4
                          'kernel-store-u8-4k 4 'kernel-subregion 4
-                         'kernel-load-u32 3 'kernel-store-u32 4} op) (count args))
+                         'kernel-load-u32 3 'kernel-store-u32 4
+                         'kernel-compare-exchange-u32 5} op) (count args))
             (reject! "runtime KIR kernel memory operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
-        (contains? '#{kernel-boot-info kernel-read-cr2 kernel-read-cr3 kernel-write-cr3 kernel-invlpg
+        (contains? '#{kernel-boot-info kernel-publish-current-domain kernel-value-runtime-capability-table kernel-value-provider-queue kernel-value-runtime-arena kernel-value-runtime-cas-scratch kernel-publish-value-provider-status kernel-value-provider-status kernel-read-cr2 kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                       kernel-cli kernel-sti kernel-hlt kernel-pause
                       kernel-out-u8 kernel-out-u32
                       kernel-in-u8 kernel-in-u32
@@ -932,7 +934,7 @@
           ;; 32-bit number. That is precisely the failure this independent
           ;; table exists to catch: a wrong arity here does not crash, it
           ;; returns the wrong machine's answer.
-          (when-not (= ({'kernel-boot-info 0 'kernel-read-cr2 0 'kernel-read-cr3 0 'kernel-write-cr3 1
+          (when-not (= ({'kernel-boot-info 0 'kernel-publish-current-domain 1 'kernel-value-runtime-capability-table 0 'kernel-value-provider-queue 0 'kernel-value-runtime-arena 0 'kernel-value-runtime-cas-scratch 0 'kernel-publish-value-provider-status 1 'kernel-value-provider-status 0 'kernel-read-cr2 0 'kernel-read-cr3 0 'kernel-write-cr3 1
                          'kernel-invlpg 1 'kernel-cli 0 'kernel-sti 0 'kernel-hlt 0
                          'kernel-pause 0 'kernel-out-u8 2 'kernel-out-u32 2
                          'kernel-in-u8 1 'kernel-in-u32 1
@@ -1311,7 +1313,8 @@
                (some #(and (seq? %) (contains? '#{kernel-load-u8 kernel-load-u8-4k
                                                   kernel-load-u8-16k kernel-store-u8
                                                   kernel-store-u8-4k kernel-load-u32 kernel-store-u32
-                                                  kernel-boot-info kernel-read-cr2
+                                                  kernel-compare-exchange-u32
+                                                  kernel-boot-info kernel-publish-current-domain kernel-value-runtime-capability-table kernel-value-provider-queue kernel-value-runtime-arena kernel-value-runtime-cas-scratch kernel-publish-value-provider-status kernel-value-provider-status kernel-read-cr2
                                                   kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                                                   kernel-cli kernel-sti kernel-hlt kernel-pause
                                                   kernel-out-u8 kernel-out-u32
@@ -1430,7 +1433,8 @@
   (let [kernel-operations '#{kernel-load-u8 kernel-load-u8-4k kernel-load-u8-16k
                              kernel-store-u8 kernel-store-u8-4k kernel-read-cr2
                              kernel-load-u32 kernel-store-u32
-                             kernel-boot-info kernel-read-cr3 kernel-write-cr3 kernel-invlpg
+                             kernel-compare-exchange-u32
+                             kernel-boot-info kernel-publish-current-domain kernel-value-runtime-capability-table kernel-value-provider-queue kernel-value-runtime-arena kernel-value-runtime-cas-scratch kernel-publish-value-provider-status kernel-value-provider-status kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                              kernel-cli kernel-sti kernel-hlt kernel-pause
                              kernel-out-u8 kernel-out-u32
                              kernel-in-u8 kernel-in-u32
