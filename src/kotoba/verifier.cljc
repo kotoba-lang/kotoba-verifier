@@ -148,13 +148,37 @@
     [:error [:record :kotoba.dataspace/error
              [[:code :keyword] [:message :string]]]]]])
 
+(def ^:private native-ui-parent-type [:option :keyword])
+(def ^:private native-ui-node-type
+  [:record :kotoba.ui/node
+   [[:id :keyword] [:parent native-ui-parent-type]
+    [:kind :keyword] [:text :string]]])
+(def ^:private native-ui-node-set-type [:set native-ui-node-type])
+(def ^:private native-ui-commit-request-type
+  [:record :kotoba.ui/commit-request
+   [[:base-revision :i64] [:nodes native-ui-node-set-type]]])
+(def ^:private native-ui-commit-result-type
+  [:record :kotoba.ui/commit-result [[:revision :i64] [:node-count :i64]]])
+(def ^:private native-ui-event-request-type
+  [:record :kotoba.ui/event-request [[:after-revision :i64]]])
+(def ^:private native-ui-event-type
+  [:record :kotoba.ui/event
+   [[:revision :i64] [:target :keyword] [:kind :keyword] [:value :string]]])
+(def ^:private native-ui-event-result-type [:option native-ui-event-type])
+
 (defn- native-provider-contract? [cap-id request-type result-type]
   (or (and (= 7 cap-id)
            (= native-clock-request-type request-type)
            (= native-clock-result-type result-type))
       (and (= 24 cap-id)
            (= native-dataspace-request-type request-type)
-           (= native-dataspace-result-type result-type))))
+           (= native-dataspace-result-type result-type))
+      (and (= 9 cap-id)
+           (= native-ui-commit-request-type request-type)
+           (= native-ui-commit-result-type result-type))
+      (and (= 10 cap-id)
+           (= native-ui-event-request-type request-type)
+           (= native-ui-event-result-type result-type))))
 ;; `vector-i64` / `vector-f64` (ADR-2608030300). Admitted here as the
 ;; target-independent operations they are, with their KIR arities -- the same
 ;; stance `string-operations` above takes, and for the same reason: a backend
@@ -273,7 +297,11 @@
             (and (vector? type)
                  (case (first type)
                    :option (and (= 2 (count type))
-                                (native-word-value-type? (second type) (inc depth)))
+                                (or (native-word-value-type? (second type) (inc depth))
+                                    (native-scalar-record-type? (second type))))
+                   :set (and (= 2 (count type))
+                             (or (native-word-value-type? (second type) (inc depth))
+                                 (native-scalar-record-type? (second type))))
                    :result (and (= 3 (count type))
                                 (native-word-value-type? (second type) (inc depth))
                                 (native-word-value-type? (nth type 2) (inc depth)))
@@ -347,6 +375,15 @@
     (and (seq? form) (= 'typed-cap-call (first form)))
     (let [[_ _cap-id _request-type _result-type request] form]
       (bounded-sum [1 (lowered-cost request env)]))
+    (and (seq? form) (= 'typed-set-new (first form)))
+    (let [[_ _type & items] form]
+      (bounded-sum (cons 1 (map #(lowered-cost % env) items))))
+    (and (seq? form) (= 'typed-set-conj (first form)))
+    (let [[_ _type value item] form]
+      (bounded-sum [1 (lowered-cost value env) (lowered-cost item env)]))
+    (and (seq? form) (contains? '#{typed-set-count typed-set-nth} (first form)))
+    (let [[_ _type & rest] form]
+      (bounded-sum (cons 1 (map #(lowered-cost % env) rest))))
     (and (seq? form)
          (contains? '#{option-some-of option-some?-of
                        result-ok-of result-err-of result-ok?-of}
@@ -452,11 +489,12 @@
 (declare ^:dynamic *call-results*)
 
 (defn- provider-result-schema
-  "Result type of a sealed provider typed-cap-call (clock 7 or dataspace 24).
+  "Result type of a sealed provider typed-cap-call
+  (clock 7, dataspace 24, ui commit 9, ui event 10).
 
   The host returns a nested pair handle, not a local SROA construction.
-  Matching that boundary is how a guest reads unix-millis or notices; it is
-  not a widening of local SROA. Same gate as clock-typed-cap-variant-match."
+  Matching that boundary is how a guest reads unix-millis, notices, or a
+  UI revision; it is not a widening of local SROA."
   [form]
   (when (and (seq? form) (= 'typed-cap-call (first form)) (= 5 (count form))
              (native-provider-contract? (nth form 1) (nth form 2) (nth form 3)))
@@ -551,6 +589,10 @@
       (when (= type (record-schema-of value locals))
         (let [field-type (second (first (filter #(= field (first %)) (nth type 2))))]
           (when (native-scalar-record-type? field-type) field-type))))
+    (and (seq? form) (= 'typed-cap-call (first form)) (= 5 (count form))
+         (native-provider-contract? (nth form 1) (nth form 2) (nth form 3))
+         (native-scalar-record-type? (nth form 3)))
+    (nth form 3)
     :else nil))
 
 ;; The record schema a LET BINDING's value denotes, or nil.
@@ -567,6 +609,10 @@
 ;; same exact i64/bool record. The native pilot scalar-replaces that shape and
 ;; emits one phi per field, so the binding carries the same ordered bundle.
 ;;
+;; A sealed UI commit typed-cap-call is the fourth: the host returns a
+;; record pair handle (revision + node-count), the same width as a boxed
+;; record result. Clock and dataspace stay on the variant path below.
+;;
 ;; NOT the general `record-schema-of`. That also resolves a bare SYMBOL, so
 ;; using it here would admit `(let [r (record-new …) r2 r] (record-get … r2 :b))`
 ;; -- and a flattened record forwarded through a second binding is N slots being
@@ -576,7 +622,9 @@
 (defn- binding-record-schema [value]
   (or (record-new-schema value)
       (call-record-schema value)
-      (record-sroa-if-schema value)))
+      (record-sroa-if-schema value)
+      (let [result (provider-result-schema value)]
+        (when (native-scalar-record-type? result) result))))
 
 (defn- binding-local [value]
   (or (binding-record-schema value)
@@ -850,7 +898,11 @@
             (reject! "runtime KIR generic option match rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
           (verify-expr! none-body locals signatures (inc depth) nodes facts)
-          (verify-expr! some-body (assoc locals binder nil) signatures
+          (verify-expr! some-body
+                        (assoc locals binder
+                               (when (native-scalar-record-type? (second type))
+                                 (second type)))
+                        signatures
                         (inc depth) nodes facts))
 
         (contains? '#{result-ok-of result-err-of result-ok?-of} op)
@@ -929,6 +981,36 @@
                      {:operation op :items (count args)
                       :limit max-vector-literal-items}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        (= op 'typed-set-new)
+        (let [[type & items] args]
+          (when-not (and (vector? type) (= :set (first type))
+                         (native-word-value-type? type))
+            (reject! "runtime KIR typed-set constructor rejected" {:operation op}))
+          (when (> (count items) max-vector-literal-items)
+            (reject! "runtime KIR typed-set literal exceeds the item limit"
+                     {:operation op :items (count items)
+                      :limit max-vector-literal-items}))
+          (doseq [item items]
+            (verify-expr! item locals signatures (inc depth) nodes facts)))
+
+        (= op 'typed-set-conj)
+        (let [[type value item] args]
+          (when-not (and (= 3 (count args))
+                         (vector? type) (= :set (first type))
+                         (native-word-value-type? type))
+            (reject! "runtime KIR typed-set conj rejected" {:operation op}))
+          (verify-expr! value locals signatures (inc depth) nodes facts)
+          (verify-expr! item locals signatures (inc depth) nodes facts))
+
+        (contains? '#{typed-set-count typed-set-nth} op)
+        (let [[type & rest] args]
+          (when-not (and (vector? type) (= :set (first type))
+                         (native-word-value-type? type)
+                         (seq rest))
+            (reject! "runtime KIR typed-set operation rejected" {:operation op}))
+          (doseq [arg rest]
+            (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
         (contains? string-index-operations op)
         (do
