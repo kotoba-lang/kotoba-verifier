@@ -63,6 +63,26 @@
     (is (not (#'kotoba.verifier/native-provider-contract? 7 request result)))
     (is (not (#'kotoba.verifier/native-provider-contract? 24 request request)))))
 
+(deftest native-ui-provider-contract-is-independently-sealed
+  (let [parent [:option :keyword]
+        node [:record :kotoba.ui/node
+              [[:id :keyword] [:parent parent] [:kind :keyword] [:text :string]]]
+        nodes [:set node]
+        commit-request [:record :kotoba.ui/commit-request
+                        [[:base-revision :i64] [:nodes nodes]]]
+        commit-result [:record :kotoba.ui/commit-result
+                       [[:revision :i64] [:node-count :i64]]]
+        event-request [:record :kotoba.ui/event-request [[:after-revision :i64]]]
+        event [:record :kotoba.ui/event
+               [[:revision :i64] [:target :keyword] [:kind :keyword] [:value :string]]]
+        event-result [:option event]]
+    (is (#'kotoba.verifier/native-word-value-type? nodes))
+    (is (#'kotoba.verifier/native-word-value-type? event-result))
+    (is (#'kotoba.verifier/native-provider-contract? 9 commit-request commit-result))
+    (is (#'kotoba.verifier/native-provider-contract? 10 event-request event-result))
+    (is (not (#'kotoba.verifier/native-provider-contract? 9 commit-request event-result)))
+    (is (not (#'kotoba.verifier/native-provider-contract? 10 event-request event)))))
+
 (deftest aggregate-boundary-contract-does-not-widen-verifier-admission
   (let [record-type [:record :t/pair [[:left :i64] [:ready :bool]]]
         plan (aggregate-abi/record-boundary-plan record-type)
@@ -1032,6 +1052,45 @@
                                          (dataspace-match 'answer)))]
     (is (= program (#'kotoba.verifier/verify-program! program)))
     (is (= bound (#'kotoba.verifier/verify-program! bound)))))
+
+(def ^:private ui-parent [:option :keyword])
+(def ^:private ui-node
+  [:record :kotoba.ui/node
+   [[:id :keyword] [:parent ui-parent] [:kind :keyword] [:text :string]]])
+(def ^:private ui-nodes [:set ui-node])
+(def ^:private ui-commit-request
+  [:record :kotoba.ui/commit-request
+   [[:base-revision :i64] [:nodes ui-nodes]]])
+(def ^:private ui-commit-result
+  [:record :kotoba.ui/commit-result [[:revision :i64] [:node-count :i64]]])
+(def ^:private ui-event-request
+  [:record :kotoba.ui/event-request [[:after-revision :i64]]])
+(def ^:private ui-event
+  [:record :kotoba.ui/event
+   [[:revision :i64] [:target :keyword] [:kind :keyword] [:value :string]]])
+(def ^:private ui-event-result [:option ui-event])
+
+(deftest ui-typed-cap-call-record-result-may-be-projected
+  (let [nodes (list 'typed-set-conj ui-nodes
+                    (list 'typed-set-new ui-nodes)
+                    (list 'record-new ui-node :view/title
+                          (list 'option-none-of ui-parent) :ui/text "ready"))
+        call (list 'typed-cap-call 9 ui-commit-request ui-commit-result
+                   (list 'record-new ui-commit-request 0 nodes))
+        program (provider-program 9 (list 'record-get ui-commit-result call :revision))
+        bound (provider-program 9 (list 'let ['answer call]
+                                        (list 'record-get ui-commit-result
+                                              'answer :revision)))]
+    (is (= program (#'kotoba.verifier/verify-program! program)))
+    (is (= bound (#'kotoba.verifier/verify-program! bound)))))
+
+(deftest ui-typed-cap-call-option-result-may-be-matched
+  (let [call (list 'typed-cap-call 10 ui-event-request ui-event-result
+                   (list 'record-new ui-event-request 0))
+        program (provider-program 10
+                 (list 'option-match ui-event-result call 0 'e
+                       (list 'record-get ui-event 'e :revision)))]
+    (is (= program (#'kotoba.verifier/verify-program! program)))))
 
 (deftest provider-typed-cap-call-match-stays-fail-closed
   (is (= "runtime KIR variant dispatch rejected"
