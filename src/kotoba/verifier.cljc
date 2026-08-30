@@ -1059,6 +1059,7 @@
         (contains? '#{kernel-boot-info kernel-read-cr0 kernel-write-cr0
                       kernel-read-cr2 kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                       kernel-read-cs kernel-page-fault-handler-address
+                      kernel-rt-timer-handler-address
                       kernel-page-fault-recovery-handler-address
                       kernel-configure-page-fault-recovery kernel-load-idt
                       kernel-double-fault-handler-address
@@ -1092,6 +1093,7 @@
                          'kernel-read-cr2 0 'kernel-read-cr3 0 'kernel-write-cr3 1
                          'kernel-invlpg 1 'kernel-cli 0 'kernel-sti 0 'kernel-hlt 0
                          'kernel-read-cs 0 'kernel-page-fault-handler-address 0
+                         'kernel-rt-timer-handler-address 0
                          'kernel-page-fault-recovery-handler-address 0
                          'kernel-configure-page-fault-recovery 2
                          'kernel-double-fault-handler-address 0
@@ -1491,6 +1493,7 @@
                                                   kernel-read-cr0 kernel-write-cr0
                                                   kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                                                   kernel-read-cs kernel-page-fault-handler-address
+                                                  kernel-rt-timer-handler-address
                                                   kernel-page-fault-recovery-handler-address
                                                   kernel-configure-page-fault-recovery
                                                   kernel-double-fault-handler-address
@@ -1620,6 +1623,7 @@
                              kernel-boot-info kernel-read-cr0 kernel-write-cr0
                              kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                              kernel-read-cs kernel-page-fault-handler-address
+                             kernel-rt-timer-handler-address
                              kernel-page-fault-recovery-handler-address
                              kernel-configure-page-fault-recovery kernel-load-idt
                              kernel-double-fault-handler-address
