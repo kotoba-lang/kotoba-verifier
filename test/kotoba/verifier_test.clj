@@ -316,7 +316,7 @@
       :kir-sha256 (artifact/sha256 program)
       :lowering :runtime-sysv-v1
       :fuel-abi {:mode :hidden-context-r9 :initial fuel}
-      :context-abi {:version 3 :fuel-offset 8 :allow-bitmap-offset 16
+      :context-abi {:version 4 :fuel-offset 8 :allow-bitmap-offset 16
                     :allow-bitmap-bytes 32 :cap-call-offset 48
                     :pair-new-offset 56 :pair-first-offset 64
                     :pair-second-offset 72 :pair-capacity 4096
@@ -331,6 +331,8 @@
                     :vector-new-empty-offset 152 :vector-conj-offset 160
                     :vector-count-offset 168 :vector-at-offset 176
                     :vector-assoc-offset 184 :vector-drop-offset 192
+                    :vector-alloc-offset 200
+                    :vector-assoc-in-place-offset 208
                     :vector-capacity 4096
                     :vector-item-capacity 65536}
       :effects (:effects program)
@@ -458,9 +460,29 @@
                 '(vector-f64-get (vector-f64-new 1) 0 7)
                 '(vector-f64-assoc (vector-f64-new 1) 0 2)
                 '(vector-f64-conj (vector-f64-new 1) 2)
-                '(vector-f64-drop (vector-f64-new 1) 1)]]
+                '(vector-f64-drop (vector-f64-new 1) 1)
+                ;; ABI v4 (superproject ADR-2609010200).
+                '(vector-alloc 4)
+                '(vector-assoc! (vector-alloc 4) 0 2)]]
     (testing (str body)
       (is (verifies? body)))))
+
+;; The bang is not a new operation, it is a claim about the handle -- so a
+;; different arity here would make it one, which is exactly what the KIR
+;; interpreter refuses to let it become. Neither has an f64 twin, and an
+;; operation this verifier does not know is refused by name rather than
+;; reaching a backend with no lowering for it.
+(deftest the-bang-is-the-same-shape-as-the-operation-without-it
+  (is (verifies? '(vector-assoc (vector-alloc 4) 0 2)))
+  (is (verifies? '(vector-assoc! (vector-alloc 4) 0 2)))
+  (is (= "runtime KIR vector operation arity rejected"
+         (rejection '(vector-assoc! (vector-alloc 4) 0))))
+  (is (= "runtime KIR vector operation arity rejected"
+         (rejection '(vector-alloc))))
+  (doseq [body ['(vector-f64-alloc 4)
+                '(vector-f64-assoc! (vector-f64-new 1) 0 2)]]
+    (testing (str body)
+      (is (some? (rejection body)) "no f64 twin exists to admit"))))
 
 ;; The arity table is the point: an operation admitted at the wrong arity
 ;; would reach a backend that reads an argument which is not there.
@@ -689,8 +711,15 @@
                               '(string-index-count
                                 (string-index-assoc
                                  (string-index-new) "cid" 7))))
-        artifact (artifact/seal (assoc (native-artifact program) :value 1))]
-    (is (= 3 (get-in artifact [:context-abi :version])))
+        artifact (artifact/seal (assoc (native-artifact program) :value 1))
+        ;; The claim is that string-index adds no ABI OF ITS OWN, so compare
+        ;; against a program that uses none rather than against a literal
+        ;; version number -- which was 3, and went to 4 for an unrelated
+        ;; reason (the ABI v4 vector slots). A literal here turns every future
+        ;; bump into a failure of this test, which is about something else.
+        plain (artifact/seal (assoc (native-artifact ok-program) :value 1))]
+    (is (= (get-in plain [:context-abi :version])
+           (get-in artifact [:context-abi :version])))
     (is (= artifact (kotoba.verifier/verify-artifact! artifact)))))
 
 (deftest a-bool-parameter-refinement-is-still-i64-only

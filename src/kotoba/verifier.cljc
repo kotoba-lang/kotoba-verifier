@@ -195,7 +195,18 @@
   '{vector-count 1 vector-get 3 vector-at 2 vector-drop 2
     vector-assoc 3 vector-conj 2
     vector-f64-count 1 vector-f64-get 3 vector-f64-at 2 vector-f64-drop 2
-    vector-f64-assoc 3 vector-f64-conj 2})
+    vector-f64-assoc 3 vector-f64-conj 2
+    ;; `vector-alloc` allocates n zeros; `vector-assoc!` is `vector-assoc`
+    ;; with the caller's claim that the handle is dead afterwards, which lets
+    ;; a backend lower the update to a store. Both re-derived here rather than
+    ;; imported, like every other entry in this file: producer and verifier
+    ;; move in the same closure and neither trusts the other's tables.
+    ;;
+    ;; The bang has the SAME arity as the operation without it, and must: KIR
+    ;; evaluates them identically, so a different shape here would make the
+    ;; bang a different operation. Neither has an f64 twin, because KIR
+    ;; declares none.
+    vector-alloc 1 vector-assoc! 3})
 ;; `vector-new` is the one variadic operation in either family: its arity IS
 ;; the literal's element count. Independently re-derived from
 ;; `kotoba.kir.value/vector-item-limit`, like every other bound in this file.
@@ -1540,13 +1551,16 @@
           expected-limits {:memory-bytes 65536
                            :fuel fuel
                            :stack-bytes 4096}
-          ;; Version 3 adds the vector table (offsets 152-192). The bump is
-          ;; load-bearing in one direction only, and that is the dangerous
-          ;; one: a v2 host has no slots there, so code compiled against v3
-          ;; that called them would jump through uninitialised memory. Every
-          ;; `checked_*` in the loader therefore refuses a context whose
-          ;; version is not exactly its own.
-          expected-context {:version 3 :fuel-offset 8 :allow-bitmap-offset 16
+          ;; Version 3 added the vector table (offsets 152-192); version 4
+          ;; adds `vector-alloc` at 200 and `vector-assoc-in-place` at 208.
+          ;; The bump is load-bearing in one direction only, and that is the
+          ;; dangerous one: a v3 host has no slots at 200-208, so code
+          ;; compiled against v4 that called them would jump through
+          ;; uninitialised memory. Every `checked_*` in the loader therefore
+          ;; refuses a context whose version is not exactly its own, and this
+          ;; map refuses an artifact that names any other ABI -- which is what
+          ;; makes the refusal explicit rather than a silent mismatch.
+          expected-context {:version 4 :fuel-offset 8 :allow-bitmap-offset 16
                             :allow-bitmap-bytes 32 :cap-call-offset 48
                             :pair-new-offset 56 :pair-first-offset 64
                             :pair-second-offset 72 :pair-capacity 4096
@@ -1561,6 +1575,8 @@
                             :vector-new-empty-offset 152 :vector-conj-offset 160
                             :vector-count-offset 168 :vector-at-offset 176
                             :vector-assoc-offset 184 :vector-drop-offset 192
+                            :vector-alloc-offset 200
+                            :vector-assoc-in-place-offset 208
                             ;; Two capacities, because a vector table entry and
                             ;; the elements it spans are separately exhaustible:
                             ;; many small vectors run out of entries first, one
