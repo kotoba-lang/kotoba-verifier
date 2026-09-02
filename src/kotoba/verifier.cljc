@@ -1054,16 +1054,30 @@
         ;; have been a policy about atomics -- it would have been an
         ;; inconsistency, since every other member of the family is admitted
         ;; here and the verifier rejects by absence.
+        ;; sysops: the general atomics belong to this family for the reason
+        ;; the paragraph above gives about the lock pair -- same
+        ;; `base length index` prefix, same bounds check -- with one
+        ;; difference that is the whole point of re-deriving the table here:
+        ;; the compare-exchanges take FIVE arguments, not four. A four-argument
+        ;; `kernel-cmpxchg-u32` would silently take the replacement as the
+        ;; comparand and store whatever the register happened to hold.
         (contains? '#{kernel-load-u8 kernel-load-u8-4k kernel-load-u8-16k
                       kernel-store-u8 kernel-store-u8-4k kernel-subregion
                       kernel-load-u32 kernel-store-u32
-                      kernel-try-lock-u32 kernel-unlock-u32} op)
+                      kernel-try-lock-u32 kernel-unlock-u32
+                      kernel-atomic-add-u32 kernel-atomic-add-u64
+                      kernel-xchg-u32 kernel-xchg-u64
+                      kernel-cmpxchg-u32 kernel-cmpxchg-u64} op)
         (do
           (when-not (= ({'kernel-load-u8 3 'kernel-load-u8-4k 3
                          'kernel-load-u8-16k 3 'kernel-store-u8 4
                          'kernel-store-u8-4k 4 'kernel-subregion 4
                          'kernel-load-u32 3 'kernel-store-u32 4
-                         'kernel-try-lock-u32 3 'kernel-unlock-u32 3} op) (count args))
+                         'kernel-try-lock-u32 3 'kernel-unlock-u32 3
+                         'kernel-atomic-add-u32 4 'kernel-atomic-add-u64 4
+                         'kernel-xchg-u32 4 'kernel-xchg-u64 4
+                         'kernel-cmpxchg-u32 5 'kernel-cmpxchg-u64 5} op)
+                       (count args))
             (reject! "runtime KIR kernel memory operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
@@ -1091,7 +1105,14 @@
                       ;; `[base+whatever-was-in-the-offset-slot]`, which is a
                       ;; plausible-looking address.
                       kernel-system-table kernel-load-ptr
-                      kernel-uefi-call2 kernel-jump-to} op)
+                      kernel-uefi-call2 kernel-jump-to
+                      ;; sysops: barriers, the timestamp counter and the
+                      ;; GS-base swap. All zero-arity, and the arity is what
+                      ;; this table is for: a one-argument `kernel-fence-full`
+                      ;; would emit `mfence` and silently discard whatever the
+                      ;; caller thought it was ordering.
+                      kernel-fence-load kernel-fence-store kernel-fence-full
+                      kernel-rdtsc kernel-rdtscp kernel-swapgs} op)
         (do
           ;; The port reads take ONE argument -- the port -- where the writes
           ;; take two. Verifying that independently of the frontend is the
@@ -1128,7 +1149,10 @@
                          'kernel-cpuid-eax 2 'kernel-cpuid-ebx 2
                          'kernel-cpuid-ecx 2 'kernel-cpuid-edx 2
                          'kernel-system-table 0 'kernel-load-ptr 2
-                         'kernel-uefi-call2 4 'kernel-jump-to 2} op)
+                         'kernel-uefi-call2 4 'kernel-jump-to 2
+                         'kernel-fence-load 0 'kernel-fence-store 0
+                         'kernel-fence-full 0 'kernel-rdtsc 0 'kernel-rdtscp 0
+                         'kernel-swapgs 0} op)
                        (count args))
             (reject! "runtime KIR kernel privileged operation arity rejected"
                      {:operation op}))
@@ -1150,6 +1174,54 @@
                          'f64-unordered 2} op)
                        (count args))
             (reject! "runtime KIR f64 operation arity rejected" {:operation op}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        ;; f32 scalar arithmetic, and the four width conversions
+        ;; (kotoba-lang docs/adr/ADR-kotoba-floating-point-on-native.md).
+        ;; Identical reasoning to the f64 arm above: each takes and returns one
+        ;; machine word -- here a binary32 pattern sign-extended from bit 31 --
+        ;; allocates nothing and touches no memory, so verification is an arity
+        ;; check plus a walk of the operands.
+        ;;
+        ;; This arm is deliberately NARROWER than the f64 one above, and the
+        ;; three families it omits are omitted for their own reasons, not by
+        ;; oversight:
+        ;;
+        ;;   f32-min / f32-max        x86 MINSS/MAXSS return the SECOND operand
+        ;;                            when either input is NaN; AArch64 FMIN and
+        ;;                            the KIR oracle return the NaN. The f64 arm
+        ;;                            above already admits that disagreement --
+        ;;                            recorded upstream, not inherited here.
+        ;;   the -checked conversions they trap in the oracle on inexactness and
+        ;;                            no backend emits the check.
+        ;;   the truncating float->int conversions
+        ;;                            three answers out of domain: x86 yields
+        ;;                            INT64_MIN, AArch64 saturates, the oracle
+        ;;                            traps.
+        ;;
+        ;; This verifier re-derives the admitted set INDEPENDENTLY of
+        ;; `kotoba.kir/only-native-word-typed-features?` on purpose, so being
+        ;; stricter than it is sound and being looser is not. Keeping the two
+        ;; omission lists identical is therefore load-bearing: an operation
+        ;; admitted there and refused here fails at verify time with
+        ;; "runtime KIR operation rejected", which is exactly how this arm's
+        ;; absence was found -- `amu compile --target x86_64 --jvm-free` on the
+        ;; f32 dot-product example, after every other layer already accepted it.
+        (contains? '#{f32-add f32-sub f32-mul f32-div
+                      f32-abs f32-neg f32-sqrt f32-from-bits f32-to-bits
+                      f32-eq f32-lt f32-le f32-gt f32-ge f32-unordered
+                      f32-to-f64-exact f64-to-f32-rounded
+                      i64-to-f32-rounded i64-to-f64-rounded} op)
+        (do
+          (when-not (= ({'f32-add 2 'f32-sub 2 'f32-mul 2 'f32-div 2
+                         'f32-abs 1 'f32-neg 1 'f32-sqrt 1
+                         'f32-from-bits 1 'f32-to-bits 1
+                         'f32-eq 2 'f32-lt 2 'f32-le 2 'f32-gt 2 'f32-ge 2
+                         'f32-unordered 2
+                         'f32-to-f64-exact 1 'f64-to-f32-rounded 1
+                         'i64-to-f32-rounded 1 'i64-to-f64-rounded 1} op)
+                       (count args))
+            (reject! "runtime KIR f32 operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
         (contains? signatures op)
@@ -1540,6 +1612,15 @@
                                                   kernel-read-msr kernel-write-msr
                                                   kernel-cpuid-eax kernel-cpuid-ebx
                                                   kernel-cpuid-ecx kernel-cpuid-edx
+                                                  ;; sysops
+                                                  kernel-try-lock-u32 kernel-unlock-u32
+                                                  kernel-atomic-add-u32 kernel-atomic-add-u64
+                                                  kernel-xchg-u32 kernel-xchg-u64
+                                                  kernel-cmpxchg-u32 kernel-cmpxchg-u64
+                                                  kernel-fence-load kernel-fence-store
+                                                  kernel-fence-full
+                                                  kernel-rdtsc kernel-rdtscp
+                                                  kernel-swapgs
                                                   ;; boot: the firmware
                                                   ;; boundary is listed here
                                                   ;; too, so a non-firmware
@@ -1690,7 +1771,19 @@
                              ;; to try to evaluate them, and a machine property
                              ;; is not a compile-time value.
                              kernel-cpuid-eax kernel-cpuid-ebx
-                             kernel-cpuid-ecx kernel-cpuid-edx}
+                             kernel-cpuid-ecx kernel-cpuid-edx
+                             ;; sysops: both new families suppress the oracle
+                             ;; for the reason `kotoba.kir/lower` lists them.
+                             ;; An atomic read-modify-write and an `rdtsc` are
+                             ;; not compile-time values, and the lock pair
+                             ;; belongs here for the same reason and was
+                             ;; missing.
+                             kernel-try-lock-u32 kernel-unlock-u32
+                             kernel-atomic-add-u32 kernel-atomic-add-u64
+                             kernel-xchg-u32 kernel-xchg-u64
+                             kernel-cmpxchg-u32 kernel-cmpxchg-u64
+                             kernel-fence-load kernel-fence-store kernel-fence-full
+                             kernel-rdtsc kernel-rdtscp kernel-swapgs}
         kernel-native? (some #(and (seq? %) (contains? kernel-operations (first %)))
                              (tree-seq coll? seq (get-in kexe [:program :functions])))
         expected-value

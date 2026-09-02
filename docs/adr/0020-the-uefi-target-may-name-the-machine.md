@@ -1,4 +1,4 @@
-# ADR-0019: The UEFI firmware target may name the machine
+# ADR-0020: The UEFI firmware target may name the machine
 
 - Status: accepted
 - Date: 2026-09-02
