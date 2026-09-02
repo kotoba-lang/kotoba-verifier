@@ -49,7 +49,7 @@ whoever owns that change, and nothing here needs a newer one.
 
 ## Evidence
 
-`clojure -M:test`: 66 tests, 420 assertions, 0 failures.
+`clojure -M:test`: 75 tests, 520 assertions, 0 failures (after merging kotoba-lang/main, which hoisted the fourth table into `kernel-native-operations`).
 
 Two deliberate breaks, each producing the failure it names and no other:
 

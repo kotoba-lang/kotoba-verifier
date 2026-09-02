@@ -84,6 +84,36 @@
 (defn- reject! [message data]
   (throw (ex-info message (assoc data :phase :verify))))
 
+(defn- guest-integer?
+  "True for a value that IS a `.kotoba` integer literal as it reaches this
+  verifier, on either compiler host.
+
+  On `:clj` that is `integer?` and nothing else. On `:cljs` a guest i64 is a
+  JavaScript `bigint` -- `kotoba.compiler.kotoba-reader` reads every integer
+  token as one, and `kotoba.kir` coerces every literal to one at the point it
+  enters the runtime value stream -- and cljs `integer?` does NOT recognize a
+  bigint (`(integer? (js/BigInt 4))` => false, confirmed live; see
+  `kotoba.kir.cljs-i64`'s namespace docstring). A plain cljs number is also
+  admitted because the frontend's own desugaring synthesizes ordinary Clojure
+  literals (`when`'s trailing `0`, `and`'s vacuous `1`) that never pass
+  through the reader.
+
+  Held as one named predicate rather than re-spelled at each site because the
+  failure it guards against is silent in exactly one direction: writing bare
+  `integer?` at a site that receives a guest literal REFUSES every nbb
+  artifact while the JVM route accepts the same program, and the refusal is
+  indistinguishable from a genuine one. That is what happened to the i64/i32
+  shift counts below, whose deleted comment argued -- correctly about the
+  VALUE and wrongly about the REPRESENTATION -- that a count in [0,63] is too
+  small for a bigint question to arise. The range is not what decides it.
+
+  Range comparisons stay outside this predicate: JS relational operators
+  compare bigint against number directly, so `(<= 0 n 63)` is exact on both
+  hosts once `n` is known to be one of the two admitted representations."
+  [form]
+  #?(:clj (integer? form)
+     :cljs (or (i64/bigint-value? form) (integer? form))))
+
 (def target-contracts
   {:x86_64-kotoba-v1 {:lowering :runtime-sysv-v1 :emit x86-64/emit-program}
    :aarch64-kotoba-v1 {:lowering :runtime-aapcs64-v1 :emit aarch64/emit-program}})
@@ -95,8 +125,7 @@
 (def ^:private max-native-fuel 1048576)
 
 (defn- admitted-native-fuel? [fuel]
-  (and #?(:clj (integer? fuel)
-          :cljs (or (i64/bigint-value? fuel) (integer? fuel)))
+  (and (guest-integer? fuel)
        (<= 1 fuel max-native-fuel)))
 
 (def max-functions 1024)
@@ -394,12 +423,11 @@
 (defn- valid-name? [value]
   (and (simple-symbol? value) (<= (count (name value)) max-symbol-chars)))
 
-;; Same bigint-recognition guard `verify-expr!` needs (see its own
-;; comment): a cap-id straight from a KIR effect is a cljs `bigint`, which
-;; `integer?` alone does not reliably recognize.
+;; A cap-id straight from a KIR effect is a guest literal -- a cljs `bigint`
+;; under nbb -- so it takes `guest-integer?`, not bare `integer?`.
 (defn- valid-effect? [effect]
   (and (vector? effect) (= 2 (count effect)) (= :cap/call (first effect))
-       #?(:clj (integer? (second effect)) :cljs (or (i64/bigint-value? (second effect)) (integer? (second effect))))
+       (guest-integer? (second effect))
        (<= 0 (second effect) 255)))
 
 (defn- bounded-sum [values]
@@ -408,9 +436,9 @@
 
 (defn- lowered-cost [form env]
   (cond
-    ;; Same bigint-recognition guard as `verify-expr!` below (see its own
-    ;; comment) -- `form` here walks the same KIR expression tree.
-    #?(:clj (integer? form) :cljs (or (i64/bigint-value? form) (integer? form)))
+    ;; Same guard as `verify-expr!` below -- `form` here walks the same KIR
+    ;; expression tree.
+    (guest-integer? form)
     1
     (string? form) 1
     ;; A keyword literal, reachable the same way a string one is -- as a record
@@ -732,10 +760,9 @@
   (when (> depth max-depth)
     (reject! "runtime KIR expression depth rejected" {:depth depth}))
   (cond
-    ;; `integer?` alone does not reliably recognize a cljs `bigint` (see
-    ;; `kotoba.kir.cljs-i64`'s own namespace docstring) -- mirrors
-    ;; `kotoba.wasm.core`'s identical dispatch guard.
-    #?(:clj (integer? form) :cljs (or (i64/bigint-value? form) (integer? form)))
+    ;; `guest-integer?`, not bare `integer?` -- mirrors `kotoba.wasm.core`'s
+    ;; identical dispatch guard.
+    (guest-integer? form)
     (when-not #?(:clj (<= Long/MIN_VALUE form Long/MAX_VALUE)
                  :cljs (i64/in-i64-range? (i64/->bigint form)))
       (reject! "runtime KIR integer is outside i64" {:value form}))
@@ -791,7 +818,7 @@
         (= op 'cap-call)
         (let [[cap-id value :as call-args] args]
           (when-not (and (= 2 (count call-args))
-                        #?(:clj (integer? cap-id) :cljs (or (i64/bigint-value? cap-id) (integer? cap-id)))
+                        (guest-integer? cap-id)
                         (<= 0 cap-id 255))
             (reject! "runtime KIR capability call rejected" {}))
           (vswap! facts update :effects conj [:cap/call cap-id])
@@ -800,8 +827,7 @@
         (= op 'typed-cap-call)
         (let [[cap-id request-type result-type request :as call-args] args]
           (when-not (and (= 4 (count call-args))
-                         #?(:clj (integer? cap-id)
-                            :cljs (or (i64/bigint-value? cap-id) (integer? cap-id)))
+                         (guest-integer? cap-id)
                          (<= 0 cap-id 255)
                          (or (contains? #{[:i64 :i64] [:string :string]
                                           [:option-i64 :option-i64]
@@ -835,8 +861,10 @@
         (do
           (when-not (= (get i32-operations op) (count args))
             (reject! "runtime KIR i32 operation arity rejected" {:operation op}))
+          ;; `guest-integer?`, not bare `integer?`: the count is a guest
+          ;; literal, so on nbb it is a JS bigint. See that predicate.
           (when (and (contains? i32-shifts op)
-                     (not (and (integer? (second args)) (<= 0 (second args) 31))))
+                     (not (and (guest-integer? (second args)) (<= 0 (second args) 31))))
             (reject! "runtime KIR i32 shift count rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
@@ -845,12 +873,18 @@
           (when-not (= (get i64-operations op) (count args))
             (reject! "runtime KIR i64 operation arity rejected" {:operation op}))
           ;; Re-derived from the frontend's own gate rather than trusted from
-          ;; it. `integer?` is the right predicate on both runtimes here: an
-          ;; out-of-range or non-literal count is what must be caught, and a
-          ;; count in [0,63] is small enough that no bigint representation
-          ;; question arises.
+          ;; it -- and re-derived with `guest-integer?`, which is what the
+          ;; frontend's `kotoba-integer?` is. Bare `integer?` was wrong here:
+          ;; the argument that a count in [0,63] is too small for a bigint
+          ;; question to arise confuses the VALUE with its REPRESENTATION.
+          ;; Under nbb every guest literal is a JS bigint whatever its
+          ;; magnitude, so `(integer? 4)` was false and NO artifact using an
+          ;; i64 shift could be built on the JDK-free route, while the JVM
+          ;; route accepted the same program. Fail-closed is unchanged: a
+          ;; non-literal or out-of-range count still reaches the same
+          ;; refusal on both hosts.
           (when (and (contains? i64-shifts op)
-                     (not (and (integer? (second args)) (<= 0 (second args) 63))))
+                     (not (and (guest-integer? (second args)) (<= 0 (second args) 63))))
             (reject! "runtime KIR i64 shift count rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
@@ -1637,6 +1671,71 @@
         (reject! "runtime KIR lowering budget exhausted" {:cost cost}))))
   program))
 
+
+;; boot: hoisted out of `verify-runtime!` so it can be asserted directly.
+;; This list decides whether the ORACLE re-executes an entry, and the same
+;; decision is made independently in `kotoba.kir/lower`. When the two
+;; disagree the failure surfaces in neither one's terms: the compiler
+;; correctly seals no value, this side re-executes the entry, gets
+;; `:kernel-privileged-unavailable`, and refuses the artifact as an oracle
+;; mismatch it never had. Measured 2026-09-02 on the four operations at the
+;; end of the set.
+;;
+;; memwidth: the windowed families come from the table, for the reason the
+;; two sites above do.
+(def ^:private kernel-native-operations
+  (into (set (keys kernel-memory-operations))
+        '#{kernel-read-cr2
+                             kernel-boot-info kernel-read-cr0 kernel-write-cr0
+                             kernel-read-cr3 kernel-write-cr3 kernel-invlpg
+                             kernel-read-cs kernel-page-fault-handler-address
+                             kernel-rt-timer-handler-address
+                             kernel-page-fault-recovery-handler-address
+                             kernel-configure-page-fault-recovery kernel-load-idt
+                             kernel-double-fault-handler-address
+                             kernel-configure-double-fault-ist kernel-load-gdt-tss
+                             kernel-probe-guard-write kernel-probe-text-write kernel-probe-nx-execute
+                             kernel-probe-recoverable-guard-write kernel-probe-double-fault
+                             kernel-cli kernel-sti kernel-hlt kernel-pause
+                             kernel-out-u8 kernel-out-u32
+                             kernel-in-u8 kernel-in-u32
+                             kernel-read-msr kernel-write-msr
+                             ;; The `cpuid` four suppress the oracle here for
+                             ;; the same reason `kotoba.kir/lower` lists them:
+                             ;; their operands are literals at every real call
+                             ;; site, so an oracle has every structural reason
+                             ;; to try to evaluate them, and a machine property
+                             ;; is not a compile-time value.
+                             kernel-cpuid-eax kernel-cpuid-ebx
+                             kernel-cpuid-ecx kernel-cpuid-edx
+                             ;; sysops: both new families suppress the oracle
+                             ;; for the reason `kotoba.kir/lower` lists them.
+                             ;; An atomic read-modify-write and an `rdtsc` are
+                             ;; not compile-time values, and the lock pair
+                             ;; belongs here for the same reason and was
+                             ;; missing.
+                             kernel-try-lock-u32 kernel-unlock-u32
+                             kernel-atomic-add-u32 kernel-atomic-add-u64
+                             kernel-xchg-u32 kernel-xchg-u64
+                             kernel-cmpxchg-u32 kernel-cmpxchg-u64
+                             kernel-fence-load kernel-fence-store kernel-fence-full
+                             kernel-rdtsc kernel-rdtscp kernel-swapgs
+                             ;; boot: the four UEFI firmware operations, for
+                             ;; the same reason the MSR pair and the `cpuid`
+                             ;; four are here -- there is nothing an oracle
+                             ;; may pre-answer about a pointer the FIRMWARE
+                             ;; chose, memory it owns, code it runs, or a
+                             ;; transfer that does not return.
+                             kernel-system-table kernel-load-ptr
+                             kernel-uefi-call2 kernel-jump-to
+                             ;; isr: and the interrupt entry address, whose
+                             ;; argument is a literal vector at every real
+                             ;; call site -- an IDT is built by naming
+                             ;; vectors. Without this the oracle folds it,
+                             ;; kotoba-kir traps, and a valid program fails
+                             ;; to compile.
+                             kernel-isr-entry-address}))
+
 (defn- verify-runtime! [{:keys [target program code exports lowering limits fuel-abi context-abi]
                          profile-value :target-profile}]
   (let [backend (target-profile/backend target)
@@ -1788,8 +1887,7 @@
     (reject! "artifact effects do not match runtime KIR" {}))
   (when-not (every? #(and (vector? %) (= :cap/call (first %))
                           (= 2 (count %))
-                          #?(:clj (integer? (second %))
-                             :cljs (or (i64/bigint-value? (second %)) (integer? (second %))))
+                          (guest-integer? (second %))
                           (<= 0 (second %) 255)) effects)
     (reject! "native artifact contains an unsupported effect" {:effects effects}))
   (when-not (and (vector? code) (<= 1 (count code) (* 1024 1024))
@@ -1820,51 +1918,7 @@
                                 :else :kotoba.i64/direct-v1)})]
     (when-not (= expected compatibility)
       (reject! "native compatibility metadata rejected" {:target target})))
-  ;; memwidth: from the table, for the reason the two sites above are.
-  (let [kernel-operations
-        (into (set (keys kernel-memory-operations))
-              '#{kernel-read-cr2
-                             kernel-boot-info kernel-read-cr0 kernel-write-cr0
-                             kernel-read-cr3 kernel-write-cr3 kernel-invlpg
-                             kernel-read-cs kernel-page-fault-handler-address
-                             kernel-rt-timer-handler-address
-                             kernel-page-fault-recovery-handler-address
-                             kernel-configure-page-fault-recovery kernel-load-idt
-                             kernel-double-fault-handler-address
-                             kernel-configure-double-fault-ist kernel-load-gdt-tss
-                             kernel-probe-guard-write kernel-probe-text-write kernel-probe-nx-execute
-                             kernel-probe-recoverable-guard-write kernel-probe-double-fault
-                             kernel-cli kernel-sti kernel-hlt kernel-pause
-                             kernel-out-u8 kernel-out-u32
-                             kernel-in-u8 kernel-in-u32
-                             kernel-read-msr kernel-write-msr
-                             ;; The `cpuid` four suppress the oracle here for
-                             ;; the same reason `kotoba.kir/lower` lists them:
-                             ;; their operands are literals at every real call
-                             ;; site, so an oracle has every structural reason
-                             ;; to try to evaluate them, and a machine property
-                             ;; is not a compile-time value.
-                             kernel-cpuid-eax kernel-cpuid-ebx
-                             kernel-cpuid-ecx kernel-cpuid-edx
-                             ;; sysops: both new families suppress the oracle
-                             ;; for the reason `kotoba.kir/lower` lists them.
-                             ;; An atomic read-modify-write and an `rdtsc` are
-                             ;; not compile-time values, and the lock pair
-                             ;; belongs here for the same reason and was
-                             ;; missing.
-                             kernel-try-lock-u32 kernel-unlock-u32
-                             kernel-atomic-add-u32 kernel-atomic-add-u64
-                             kernel-xchg-u32 kernel-xchg-u64
-                             kernel-cmpxchg-u32 kernel-cmpxchg-u64
-                             kernel-fence-load kernel-fence-store kernel-fence-full
-                             kernel-rdtsc kernel-rdtscp kernel-swapgs
-                             ;; isr: and the interrupt entry address, whose
-                             ;; argument is a literal vector at every real
-                             ;; call site -- an IDT is built by naming
-                             ;; vectors. Without this the oracle folds it,
-                             ;; kotoba-kir traps, and a valid program fails
-                             ;; to compile.
-                             kernel-isr-entry-address})
+  (let [kernel-operations kernel-native-operations
         kernel-native? (some #(and (seq? %) (contains? kernel-operations (first %)))
                              (tree-seq coll? seq (get-in kexe [:program :functions])))
         expected-value
