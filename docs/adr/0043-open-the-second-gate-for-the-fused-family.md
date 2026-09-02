@@ -1,4 +1,4 @@
-# ADR 0029: open the second gate for the fused dequantize-and-dot family
+# ADR 0043: open the second gate for the fused dequantize-and-dot family
 
 Status: accepted. Date: 2026-09-02.
 
@@ -9,7 +9,7 @@ operation the other six admit: the artifact is refused with "runtime KIR
 operation rejected", and it was measured on the first real `.kotoba` program
 that used `kernel-dot-f32`.
 
-kotoba-gmir ADR 0013 adds three more.
+kotoba-gmir ADR 0023 adds three more.
 
 ## Decision
 
