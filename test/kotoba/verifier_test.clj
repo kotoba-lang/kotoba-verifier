@@ -1271,6 +1271,43 @@
     (testing (str form)
       (is (= reason (sysops-rejection #(sysops-verify-expr form arity))) form))))
 
+(deftest the-interrupt-entry-address-is-admitted-at-arity-one
+  ;; isr: this namespace re-derives its own privileged table and rejects by
+  ;; ABSENCE, so an operation kotoba-sema, kotoba-kir, kotoba-gmir and
+  ;; kotoba-native all admit still fails here with "runtime KIR operation
+  ;; rejected" until this row exists. That is the two-gate shape, and it is
+  ;; why this test is a membership test and not a formality.
+  (is (nil? (sysops-rejection
+             #(sysops-verify-expr '(kernel-isr-entry-address p0) 1))))
+  (is (nil? (sysops-rejection
+             #(sysops-verify-expr '(kernel-isr-entry-address 3) 0)))
+      "a literal vector is the shape a real IDT build has"))
+
+(deftest the-interrupt-entry-address-pins-arity-one-independently
+  ;; Arity ONE, where every other address operation in this family is
+  ;; zero-arity -- which is exactly why re-deriving the number here is worth
+  ;; the duplication. A zero-argument `kernel-isr-entry-address` would index
+  ;; the entry table with whatever the previous expression left in the
+  ;; register, and the caller's next act is to write the answer into an IDT
+  ;; gate descriptor. The failure is a jump to a plausible-looking address.
+  (doseq [[form arity]
+          [['(kernel-isr-entry-address) 0]
+           ['(kernel-isr-entry-address p0 p1) 2]]]
+    (testing (str form)
+      (is (= "runtime KIR kernel privileged operation arity rejected"
+             (sysops-rejection #(sysops-verify-expr form arity)))
+          form)))
+  ;; Pinned beside it: the three canned handler-address operations stay
+  ;; zero-arity here too, so widening one cannot be read as widening the
+  ;; family.
+  (doseq [form ['(kernel-page-fault-handler-address p0)
+                '(kernel-page-fault-recovery-handler-address p0)
+                '(kernel-double-fault-handler-address p0)]]
+    (testing (str form)
+      (is (= "runtime KIR kernel privileged operation arity rejected"
+             (sysops-rejection #(sysops-verify-expr form 1)))
+          form))))
+
 (deftest an-unknown-kernel-operation-is-still-rejected-by-absence
   ;; The floor under both tests above: this namespace admits by membership,
   ;; so a misspelling is refused rather than passed through.
