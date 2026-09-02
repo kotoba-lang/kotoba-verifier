@@ -5,10 +5,12 @@
         ;; `kotoba.kir/native-floating-point-operations`. It is compared, not
         ;; imported: the verifier still derives its own set, because being
         ;; stricter than the oracle is sound and being looser is not. 6b459e2
-        ;; is the commit that exports that list.
+        ;; is the commit that exports that list. Advanced 2026-09-02 to reach
+        ;; `native-erased-source-carrier-types`, the second list the same test
+        ;; compares (kotoba-kir ADR 0240).
         io.github.kotoba-lang/kotoba-kir
         {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-         :git/sha "08bdab8b1084160dcb58ac291a002b140a5abf13"}
+         :git/sha "061283e9cb7d819bf96ae0c28d0afbbd52195b6a"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
          :git/sha "ba29522ece748d2f7ff420d2ba45b1126c94baf8"}
@@ -29,22 +31,31 @@
         ;; Verification therefore re-emits with the exact producer
         ;; implementation whose KIR slice is admitted here.
         ;; boot-lit: kotoba-gmir is named at the TOP LEVEL rather than taken
-        ;; through kotoba-native, and the reason is a measurement. This file
-        ;; needs `gmir/rodata-content?` -- the single decoder for a read-only
-        ;; literal, because re-deriving the GUID grammar here would be a second
-        ;; thing that has to agree about what a literal is. Bumping the
-        ;; kotoba-native pin to reach it instead imports 22 failures in
-        ;; `pinned-producer-*`, which pin allocator output shapes across an
-        ;; allocator change this stream does not own (measured 2026-09-02:
-        ;; main is 67/425/0, the same suite at kotoba-native fdd580e is
-        ;; 67/429/30). A top-level git dependency wins over a transitive one,
-        ;; so this reaches the decoder without moving the backend.
+        ;; through kotoba-native. This file needs `gmir/rodata-content?` -- the
+        ;; single decoder for a read-only literal, because re-deriving the GUID
+        ;; grammar here would be a second thing that has to agree about what a
+        ;; literal is.
+        ;;
+        ;; It was ALSO a way of not moving the backend: bumping the
+        ;; kotoba-native pin to reach the decoder imported 22 failures in
+        ;; `pinned-producer-*`. That reason is gone. The 22 were not drift --
+        ;; they were three tests pinning SPILL SLOTS as literals across
+        ;; kotoba-native 7b25376, which gave the allocator a callee-saved tier
+        ;; so those programs park in a register instead of on the stack. The
+        ;; tests now pin the property the literals stood for (a value a call
+        ;; cannot be trusted with is materialised exactly once, in a home the
+        ;; call cannot clobber) and the pin below is at kotoba-native main.
         io.github.kotoba-lang/kotoba-gmir
         {:git/url "https://github.com/kotoba-lang/kotoba-gmir.git"
          :git/sha "fe238166e932c29700f3f447701e1f9893aedce1"}
+        ;; Advanced 2026-09-02 from a2023fed (302 commits behind) now that the
+        ;; `pinned-producer-*` blocker above is diagnosed and repaired. A pin
+        ;; that cannot advance stops exercising every new operation through
+        ;; `verify-native-artifact!`, which is the whole point of re-emitting
+        ;; with the exact producer.
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
-         :git/sha "a2023fed59208b0b4f48795d6e688f5cbd1aad8e"}
+         :git/sha "70984ea591af78fd3697f9e78aa7daa6573a5cbe"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}

@@ -1580,6 +1580,30 @@
   ;; no operation for a host to construct, validate, inspect, or release one.
   (contains? #{:vector-i64 :vector-f64 :string-index} type))
 
+;; slice-value: a type kotoba-sema's SOURCE syntax admits and erases before HIR
+;; (kotoba-sema ADR 0009). `[:slice T]` is a base AND a length -- two machine
+;; words -- so nothing here can carry it, and `native-boundary-type?` above
+;; would have refused it the way it refuses `[:banana :u8]`: by absence,
+;; surfacing as "runtime KIR function shape rejected" with a function name and
+;; nothing else.
+;;
+;; This is an INDEPENDENT copy of `kotoba.kir/native-erased-source-carrier-types`
+;; and stays one, for the reason ADR 0024 gives: the verifier re-derives what
+;; native admits rather than importing it, because being stricter than the
+;; oracle is sound and being looser is not. `kotoba.verifier-kir-agreement-test`
+;; compares the two and names the difference, so the copies cannot drift
+;; quietly.
+(def ^:private erased-source-carrier-types
+  {:slice :kotoba.error/slice-not-a-native-boundary-type})
+
+(defn- erased-source-carrier-refusal
+  "The NAMED reason TYPE cannot cross a native function boundary, or nil.
+  `nil` is not admission -- most refusals here are by absence, which is a
+  gate's right default."
+  [type]
+  (when (and (vector? type) (seq type))
+    (get erased-source-carrier-types (first type))))
+
 (defn- native-function-boundary-type? [type exported?]
   (or (native-boundary-type? type)
       (and (not exported?) (native-private-handle-type? type))))
@@ -1684,6 +1708,20 @@
           (into {}
                 (map (fn [function]
                        (let [exported? (contains? exports (:name function))]
+                         ;; slice-value: the named refusals FIRST, so a source
+                         ;; carrier type that reached here says which invariant
+                         ;; broke instead of arriving as an anonymous shape
+                         ;; rejection. Guarded on `map?` because the shape
+                         ;; check below is what establishes that.
+                         (when (map? function)
+                           (doseq [type (cond-> (vec (:param-types function))
+                                          (:result function) (conj (:result function)))
+                                   :let [reason (erased-source-carrier-refusal type)]
+                                   :when reason]
+                             (reject! "runtime KIR function carries a source carrier type the machine does not"
+                                      {:function (:name function)
+                                       :type type
+                                       :reason reason})))
                          (when-not
                           (and (map? function)
                                (let [keys* (set (keys function))
