@@ -1,7 +1,15 @@
-# ADR-0021: A guest literal is not a host integer, and this repo now runs on both hosts
+# ADR-0022: A guest literal is not a host integer, and this repo now runs on both hosts
 
 - Status: accepted
 - Date: 2026-09-02
+- Renumbered 0021 -> 0022 on 2026-09-02: two streams took 0021 the same
+  day. This one merged first (`3d7a6f0` 03:11Z) and
+  `0021-open-the-second-gate-for-the-interrupt-entry-address.md` second, so
+  by first-come this file should have kept the number -- it moves instead
+  because it is the one whose downstream references (amu ADR-0292, amu
+  `deps.edn`, amu `aggregate_abi_test.clj`) had not landed yet and could
+  still be corrected in the same breath. Numbering is a discovery alias;
+  a dangling reference is a real defect.
 
 ## Context
 
