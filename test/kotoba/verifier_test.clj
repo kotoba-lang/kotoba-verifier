@@ -1484,3 +1484,49 @@
           "there is no 128-bit access")
       (is (not (memwidth-verifies? '(kernel-load-u8-1m base length index)))
           "and no 1 MiB tier"))))
+
+;; ---------------------------------------------------------------------------
+;; simd: the f32 dot product (kotoba-gmir ADR 0010).
+;; ---------------------------------------------------------------------------
+
+(deftest the-f32-dot-product-is-admitted-at-arity-five
+  ;; This namespace re-derives its own tables and rejects by ABSENCE, so an
+  ;; operation kotoba-sema, kotoba-kir, kotoba-gmir, kotoba-mir, kotoba-codegen
+  ;; and kotoba-native all admit still fails here with "runtime KIR operation
+  ;; rejected" until this row exists. It did -- measured, on the first real
+  ;; `.kotoba` program that used it.
+  (is (nil? (sysops-rejection
+             #(sysops-verify-expr '(kernel-dot-f32 p0 p1 p2 p3 p4) 5))))
+  (is (nil? (sysops-rejection
+             #(sysops-verify-expr '(kernel-dot-f32 p0 48 p1 48 12) 2)))
+      "literal lengths and a literal count are the shape a real caller has"))
+
+(deftest the-f32-dot-product-pins-arity-five-independently
+  ;; Worse here than for the compare-exchanges beside it. Four of the five
+  ;; arguments are INTERCHANGEABLE i64 words at this layer -- two bases and
+  ;; two lengths -- so a short call does not fail on a type, it silently
+  ;; takes a length as a base and folds whatever is at that address.
+  (doseq [[form arity] [['(kernel-dot-f32 p0 p1 p2 p3) 4]
+                        ['(kernel-dot-f32 p0 p1 p2) 3]
+                        ['(kernel-dot-f32 p0 p1 p2 p3 p4 p5) 6]]]
+    (testing (str form)
+      (is (= "runtime KIR kernel memory operation arity rejected"
+             (sysops-rejection #(sysops-verify-expr form arity)))
+          form))))
+
+(deftest the-f32-dot-product-suppresses-the-compile-time-oracle
+  ;; It reads memory the oracle has not been given, exactly as every windowed
+  ;; load does -- but it does NOT arrive in `kernel-native-operations` with
+  ;; that table, because its operands are two regions and a count rather than
+  ;; `base length index [value]`, so it has to be named.
+  ;;
+  ;; When this side and `kotoba.kir/lower` disagree the failure surfaces in
+  ;; neither one's terms: the compiler correctly seals no value, this side
+  ;; re-executes the entry, gets `:kernel-memory-unavailable`, and refuses the
+  ;; artifact as an oracle mismatch it never had.
+  (is (contains? @#'kotoba.verifier/kernel-native-operations 'kernel-dot-f32))
+  (testing "and the windowed family it is NOT a member of is still there"
+    (is (contains? @#'kotoba.verifier/kernel-native-operations 'kernel-load-u32))
+    (is (not (contains? @#'kotoba.verifier/kernel-memory-operations
+                        'kernel-dot-f32))
+        "its shape is not `base length index [value]`, so it is not in that table")))

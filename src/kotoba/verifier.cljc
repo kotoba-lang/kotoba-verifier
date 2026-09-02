@@ -79,7 +79,17 @@
          '{kernel-try-lock-u32 3 kernel-unlock-u32 3
            kernel-atomic-add-u32 4 kernel-atomic-add-u64 4
            kernel-xchg-u32 4 kernel-xchg-u64 4
-           kernel-cmpxchg-u32 5 kernel-cmpxchg-u64 5}))
+           kernel-cmpxchg-u32 5 kernel-cmpxchg-u64 5
+           ;; simd: the f32 dot product (kotoba-gmir ADR 0010).
+           ;;
+           ;;   (kernel-dot-f32 a-base a-length b-base b-length count)
+           ;;
+           ;; Five arguments, and getting the arity wrong here would be worse
+           ;; than for the compare-exchanges above: four of the five are
+           ;; INTERCHANGEABLE i64 words at this layer -- two bases, two
+           ;; lengths -- so a short call would silently take a length as a
+           ;; base. It is the same argument for keeping arities as data.
+           kernel-dot-f32 5}))
 
 (defn- reject! [message data]
   (throw (ex-info message (assoc data :phase :verify))))
@@ -1734,7 +1744,16 @@
                              ;; vectors. Without this the oracle folds it,
                              ;; kotoba-kir traps, and a valid program fails
                              ;; to compile.
-                             kernel-isr-entry-address}))
+                             kernel-isr-entry-address
+                             ;; simd: the f32 dot product reads memory the
+                             ;; oracle has not been given, exactly as every
+                             ;; windowed load does. It is not in
+                             ;; `kernel-memory-operations` above -- its
+                             ;; operands are two regions and a count rather
+                             ;; than `base length index [value]` -- so it does
+                             ;; not arrive here with that table and has to be
+                             ;; named.
+                             kernel-dot-f32}))
 
 (defn- verify-runtime! [{:keys [target program code exports lowering limits fuel-abi context-abi]
                          profile-value :target-profile}]
