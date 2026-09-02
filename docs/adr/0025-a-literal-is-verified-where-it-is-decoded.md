@@ -25,14 +25,17 @@ downstream. Sixteen bytes get placed either way and the firmware answers
 answers.
 
 The decoder is `kotoba.gmir/rodata-bytes`, reached through a **top-level**
-`kotoba-gmir` dependency rather than through `kotoba-native`. That is a
-measurement, not a preference: bumping the `kotoba-native` pin far enough to
-carry the newer gmir imports **22 failures** in `pinned-producer-*`, which pin
-allocator output shapes across an allocator change this stream does not own.
-Measured 2026-09-02 -- main is 67 tests / 425 assertions / 0 failures, and the
-same suite at `kotoba-native fdd580e` is 67 / 429 / 30. A top-level git
-dependency wins over a transitive one, so this reaches the decoder without
-moving the backend.
+`kotoba-gmir` dependency rather than through `kotoba-native`, because a
+top-level git dependency wins over a transitive one and this reaches the
+decoder without depending on which gmir the backend pin happens to carry.
+
+*(Amended 2026-09-02, ADR 0027.* This paragraph also gave a second reason:
+that bumping the `kotoba-native` pin far enough imported **22 failures** in
+`pinned-producer-*`, "an allocator change this stream does not own". That
+reason is retired. The 22 were three tests pinning spill slots as literals
+across kotoba-native `7b25376`, which gave the allocator a callee-saved tier;
+they now pin the property those literals stood for, and the `kotoba-native`
+pin is at main.*)*
 
 **The literal address heads join `kernel-native-operations`; the LENGTH head
 does not.** That set has to agree with `kotoba.kir/lower`'s own, and when the

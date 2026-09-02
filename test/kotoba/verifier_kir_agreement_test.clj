@@ -93,3 +93,85 @@
     (doseq [op '[f64-min f64-max f32-add f32-unordered i64-to-f32-rounded]]
       (is (contains? oracle op) (str op " must stay admitted by kir"))
       (is (contains? verifier op) (str op " must stay accepted by the verifier")))))
+
+;; ── slice-value: the erased source carrier types ────────────────────────────
+;;
+;; The second list the two repositories maintain in parallel. `[:slice T]` is a
+;; type kotoba-sema's SOURCE syntax admits and erases before HIR (kotoba-sema
+;; ADR 0009). Both sides refuse it BY NAME rather than by absence, so that a
+;; failure to erase says which invariant broke -- and the two names have to be
+;; the same name, or the refusal a caller catches depends on which gate it hit.
+
+(defn- verifier-carrier-types []
+  @#'kotoba.verifier/erased-source-carrier-types)
+
+(defn- oracle-carrier-types []
+  kir/native-erased-source-carrier-types)
+
+(deftest the-two-erased-source-carrier-lists-agree
+  (let [oracle (oracle-carrier-types)
+        verifier (verifier-carrier-types)]
+    (testing "evidence floor -- two empty maps are equal and say nothing"
+      (is (pos? (count oracle)) (str "SCANNED " (count oracle) " oracle carrier heads"))
+      (is (pos? (count verifier))
+          (str "SCANNED " (count verifier) " verifier carrier heads")))
+    (is (= oracle verifier)
+        (str "erased source carrier drift"
+             " -- kotoba.kir has " (pr-str (sort (keys oracle)))
+             " and the verifier has " (pr-str (sort (keys verifier)))
+             "; a head only one side names is refused with a reason on that"
+             " side and anonymously on the other"))
+    (testing "and both name the slice with the same reason"
+      (is (= :kotoba.error/slice-not-a-native-boundary-type (get oracle :slice)))
+      (is (= :kotoba.error/slice-not-a-native-boundary-type (get verifier :slice))))))
+
+(deftest a-slice-parameter-type-is-refused-with-a-reason-not-a-shape
+  ;; What this replaces: `runtime KIR function shape rejected {:function p}`,
+  ;; which is true and says nothing. The type and the reason are both pinned,
+  ;; because a rejection for some other shape defect would otherwise count as
+  ;; this assertion passing.
+  (let [program {:format :kotoba.kir/v4
+                 :entry 'main :exports ['main] :signature {:params [] :result :i64}
+                 :effects #{}
+                 :functions
+                 [{:name 'p :params '[s index] :param-types [[:slice :u8] :i64]
+                   :result :i64 :effects #{}
+                   :body '(slice-load-u8 s 8 index)}
+                  {:name 'main :params [] :param-types []
+                   :result :i64 :effects #{} :body 0}]}
+        data (try (@#'kotoba.verifier/verify-program! program) nil
+                  (catch clojure.lang.ExceptionInfo e
+                    (assoc (ex-data e) ::message (.getMessage e))))]
+    (is (= :verify (:phase data)))
+    (is (= 'p (:function data)))
+    (is (= [:slice :u8] (:type data)))
+    (is (= :kotoba.error/slice-not-a-native-boundary-type (:reason data)))
+    (is (str/includes? (::message data) "source carrier type the machine does not")))
+  (testing "a slice RESULT is refused the same way"
+    (let [program {:format :kotoba.kir/v4
+                   :entry 'main :exports ['main] :signature {:params [] :result :i64}
+                   :effects #{}
+                   :functions
+                   [{:name 'p :params '[base] :param-types [:i64]
+                     :result [:slice :u8] :effects #{} :body 'base}
+                    {:name 'main :params [] :param-types []
+                     :result :i64 :effects #{} :body 0}]}
+          data (try (@#'kotoba.verifier/verify-program! program) nil
+                    (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+      (is (= [:slice :u8] (:type data)))
+      (is (= :kotoba.error/slice-not-a-native-boundary-type (:reason data)))))
+  (testing "and the ERASED program passes the same gate"
+    ;; The control. Without it, a verifier that refused every program would
+    ;; satisfy both assertions above.
+    (let [program {:format :kotoba.kir/v4
+                   :entry 'main :exports ['main] :signature {:params [] :result :i64}
+                   :effects #{}
+                   :functions
+                   [{:name 'p :params '[base length index]
+                     :param-types [:i64 :i64 :i64]
+                     :result :i64 :effects #{}
+                     :body '(slice-load-u8 base length index)}
+                    {:name 'main :params [] :param-types []
+                     :result :i64 :effects #{} :body 0}]}]
+      (is (some? (@#'kotoba.verifier/verify-program! program))
+          "no refusal: verify-program! returns the program it accepted"))))

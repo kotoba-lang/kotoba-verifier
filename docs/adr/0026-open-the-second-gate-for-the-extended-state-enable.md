@@ -73,6 +73,12 @@ already on kotoba-native main, not this one. They belong to whoever made that
 change. Bumping here would land a red suite for someone else's reason, so the
 pin stays and this paragraph exists instead of silence.
 
+*(Amended 2026-09-02, ADR 0027. The pin was bumped, to kotoba-native main.
+"Someone else's reason" turned out to be kotoba-native `7b25376`, which gave
+the allocator a callee-saved tier: those two tests pinned SPILL SLOTS as
+literals and the programs now park in registers instead. They pin the property
+those literals stood for and the suite is green at main.)*
+
 **What the stale pin does and does not cost.** It is inert for the compiler:
 amu pins kotoba-native itself, and tools.deps resolves one version per
 classpath, so `verify-native-artifact!` re-emits with amu's newer backend. It
