@@ -1484,3 +1484,161 @@
           "there is no 128-bit access")
       (is (not (memwidth-verifies? '(kernel-load-u8-1m base length index)))
           "and no 1 MiB tier"))))
+
+;; ---------------------------------------------------------------------------
+;; simd: the f32 dot product (kotoba-gmir ADR 0010).
+;; ---------------------------------------------------------------------------
+
+(deftest the-f32-dot-product-is-admitted-at-arity-five
+  ;; This namespace re-derives its own tables and rejects by ABSENCE, so an
+  ;; operation kotoba-sema, kotoba-kir, kotoba-gmir, kotoba-mir, kotoba-codegen
+  ;; and kotoba-native all admit still fails here with "runtime KIR operation
+  ;; rejected" until this row exists. It did -- measured, on the first real
+  ;; `.kotoba` program that used it.
+  (is (nil? (sysops-rejection
+             #(sysops-verify-expr '(kernel-dot-f32 p0 p1 p2 p3 p4) 5))))
+  (is (nil? (sysops-rejection
+             #(sysops-verify-expr '(kernel-dot-f32 p0 48 p1 48 12) 2)))
+      "literal lengths and a literal count are the shape a real caller has"))
+
+(deftest the-f32-dot-product-pins-arity-five-independently
+  ;; Worse here than for the compare-exchanges beside it. Four of the five
+  ;; arguments are INTERCHANGEABLE i64 words at this layer -- two bases and
+  ;; two lengths -- so a short call does not fail on a type, it silently
+  ;; takes a length as a base and folds whatever is at that address.
+  (doseq [[form arity] [['(kernel-dot-f32 p0 p1 p2 p3) 4]
+                        ['(kernel-dot-f32 p0 p1 p2) 3]
+                        ['(kernel-dot-f32 p0 p1 p2 p3 p4 p5) 6]]]
+    (testing (str form)
+      (is (= "runtime KIR kernel memory operation arity rejected"
+             (sysops-rejection #(sysops-verify-expr form arity)))
+          form))))
+
+(deftest the-f32-dot-product-suppresses-the-compile-time-oracle
+  ;; It reads memory the oracle has not been given, exactly as every windowed
+  ;; load does -- but it does NOT arrive in `kernel-native-operations` with
+  ;; that table, because its operands are two regions and a count rather than
+  ;; `base length index [value]`, so it has to be named.
+  ;;
+  ;; When this side and `kotoba.kir/lower` disagree the failure surfaces in
+  ;; neither one's terms: the compiler correctly seals no value, this side
+  ;; re-executes the entry, gets `:kernel-memory-unavailable`, and refuses the
+  ;; artifact as an oracle mismatch it never had.
+  (is (contains? @#'kotoba.verifier/kernel-native-operations 'kernel-dot-f32))
+  (testing "and the windowed family it is NOT a member of is still there"
+    (is (contains? @#'kotoba.verifier/kernel-native-operations 'kernel-load-u32))
+    (is (not (contains? @#'kotoba.verifier/kernel-memory-operations
+                        'kernel-dot-f32))
+        "its shape is not `base length index [value]`, so it is not in that table")))
+
+(deftest the-extended-control-register-read-is-admitted-at-arity-one
+  ;; simd: `kernel-xgetbv` was landed in kotoba-gmir, kotoba-kir, kotoba-sema
+  ;; and kotoba-native and NOT here, so it fell to the terminal `:else` with
+  ;; "runtime KIR operation rejected". Nothing found that until a `.kotoba`
+  ;; program called it -- the f32 dot product's QEMU probe, which reports the
+  ;; AVX2 guard's own inputs so that "both arms agree" is not an agreement
+  ;; between a sequence and itself.
+  (is (nil? (sysops-rejection #(sysops-verify-expr '(kernel-xgetbv p0) 1))))
+  (is (nil? (sysops-rejection #(sysops-verify-expr '(kernel-xgetbv 0) 0)))
+      "a literal XCR index is the shape a real guard has")
+  (testing "arity ONE, where the cpuid four beside it take TWO"
+    (doseq [[form arity] [['(kernel-xgetbv) 0]
+                          ['(kernel-xgetbv p0 p1) 2]]]
+      (is (= "runtime KIR kernel privileged operation arity rejected"
+             (sysops-rejection #(sysops-verify-expr form arity)))
+          (str form))))
+  (testing "and it suppresses the compile-time oracle"
+    ;; Its only real argument is the literal 0, so a folder sees an operation
+    ;; over one constant with nothing about it to suggest an effect.
+    (is (contains? @#'kotoba.verifier/kernel-native-operations 'kernel-xgetbv))))
+
+;; boot-lit ───────────────────────────────────────────────────────────────────
+
+(defn- boot-lit-verify!
+  "Run the verifier's own KIR check over a program whose body is BODY.
+
+  Two other routes were tried first and both went red for the wrong reason,
+  which is why this helper exists and says so.
+
+  `privileged-artifact` CALLS the backend to produce `:code`, so a malformed
+  body never survives long enough to reach the verifier: the first run of this
+  suite reported `machine IR rejected: rodata-literal-malformed` for all eight
+  cases -- the BACKEND refusing, and green with every line of the verifier's
+  own check deleted. Substituting a body into an already-built artifact fails
+  earlier still, at `artifact integrity mismatch`, because the seal covers the
+  program.
+
+  So the check is invoked directly. It is the same function `verify-runtime!`
+  calls, and it runs before `emit` there."
+  [body]
+  (@#'kotoba.verifier/verify-program! (privileged-kir body)))
+
+(deftest boot-lit-the-wider-calls-and-the-literals-own-their-arities
+  ;; Re-derived here, independently of the frontend, for the reason every other
+  ;; arity in this file is: a wrong arity does not crash. A five-operand
+  ;; `kernel-uefi-call4` would pass whatever the register happened to hold as
+  ;; the fourth UEFI argument, and `AllocatePages` WRITES through its fourth.
+  (doseq [[body message]
+          [['(kernel-uefi-call4 1 2 3 4 5)
+            "runtime KIR kernel privileged operation arity rejected"]
+           ['(kernel-uefi-call6 1 2 3 4 5 6 7)
+            "runtime KIR kernel privileged operation arity rejected"]
+           ['(ucs2 "a" "b") "runtime KIR rodata literal arity rejected"]
+           ['(ucs2) "runtime KIR rodata literal arity rejected"]]]
+    (testing (str body)
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo (re-pattern message)
+           (boot-lit-verify! body))
+          (str body)))))
+
+(deftest boot-lit-a-literal-argument-must-be-a-string-and-well-formed
+  ;; The content check is the one worth arguing for. A malformed GUID has no
+  ;; failure mode downstream: sixteen bytes get placed either way and the
+  ;; firmware answers EFI_UNSUPPORTED, which is exactly what a machine WITHOUT
+  ;; that protocol answers.
+  (doseq [[body message]
+          [['(ucs2 42) "runtime KIR rodata literal requires a string literal"]
+           ['(guid "5B1B31A1-9562-11D2-8E3F-00A0C96972")
+            "runtime KIR rodata literal is malformed for its encoding"]
+           ['(bytes-literal "abc")
+            "runtime KIR rodata literal is malformed for its encoding"]
+           ['(bytes-literal-length "zz")
+            "runtime KIR rodata literal is malformed for its encoding"]]]
+    (testing (str body)
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo (re-pattern message)
+           (boot-lit-verify! body))
+          (str body))))
+  (testing "and a well-formed one passes the same check"
+    ;; The other direction, in the same file: a check that refused every
+    ;; literal would pass every assertion above.
+    (doseq [body ['(ucs2 "AIUEOS")
+                  '(guid "5B1B31A1-9562-11D2-8E3F-00A0C969723B")
+                  '(bytes-literal "deadbeef")
+                  '(bytes-literal-length "deadbeef")]]
+      (is (some? (boot-lit-verify! body)) (str body)))))
+
+(deftest boot-lit-the-literal-address-heads-mark-a-module-kernel-native
+  ;; This set has to agree with `kotoba.kir/lower`'s own. When the two disagree
+  ;; the failure surfaces in NEITHER one's terms: the compiler seals no value,
+  ;; this side re-executes the entry, gets the oracle's refusal, and reports an
+  ;; oracle mismatch it never had.
+  (let [operations @#'kotoba.verifier/kernel-native-operations]
+    (doseq [op '[ucs2 guid bytes-literal kernel-uefi-call4 kernel-uefi-call6]]
+      (is (contains? operations op) op))
+    (testing "and bytes-literal-length is deliberately NOT one"
+      ;; Its answer is a property of the literal text, so folding it is
+      ;; correct; kotoba-kir answers it rather than trapping, and marking a
+      ;; module kernel-native for it would cost a constant-folding pass for
+      ;; nothing.
+      (is (not (contains? operations 'bytes-literal-length))))))
+
+;; The literal TARGET rule -- which targets may name a literal pool at all --
+;; is asserted in amu (`kotoba.compiler.uefi-target-gate-test`), for the reason
+;; `an-ordinary-native-target-still-may-not` above records for the four
+;; ADR-0020 operations: reaching it here needs a backend that can EMIT a
+;; literal, and this repository pins kotoba-native itself, on purpose. Bumping
+;; that pin far enough imports 22 failures in `pinned-producer-*`, which pin
+;; allocator output shapes across a change this stream does not own (measured
+;; 2026-09-02: main is 67 tests / 425 assertions / 0 failures; the same suite
+;; at kotoba-native fdd580e is 67 / 429 / 30).
