@@ -1544,7 +1544,16 @@
   (let [backend (target-profile/backend target)
         expected-profile (target-profile/profile target)
         {expected-lowering :lowering emit :emit} (get target-contracts backend)]
-    (when (and (not (contains? #{:x86_64-aiueos-kernel-v1 :aarch64-aiueos-kernel-v1} target))
+    ;; boot: `:x86_64-aiueos-uefi-v1` joins the two kernel targets. A UEFI
+    ;; application runs at CPL0 on an identity-mapped machine with boot
+    ;; services live -- the same execution surface the kernel targets name,
+    ;; reached earlier -- so refusing port I/O and control registers there was
+    ;; refusing the target its own profile describes (`:execution :firmware`,
+    ;; `:runtime :none`, `:ambient-syscalls false`). It is also what made a
+    ;; BOOTX64.EFI unwritable in Kotoba: a bootloader cannot say anything at
+    ;; all without a port write.
+    (when (and (not (contains? #{:x86_64-aiueos-kernel-v1 :aarch64-aiueos-kernel-v1
+                                 :x86_64-aiueos-uefi-v1} target))
                (some #(and (seq? %) (contains? '#{kernel-load-u8 kernel-load-u8-4k
                                                   kernel-load-u8-16k kernel-store-u8
                                                   kernel-store-u8-4k kernel-load-u32 kernel-store-u32
@@ -1567,7 +1576,20 @@
                                                   kernel-in-u8 kernel-in-u32
                                                   kernel-read-msr kernel-write-msr
                                                   kernel-cpuid-eax kernel-cpuid-ebx
-                                                  kernel-cpuid-ecx kernel-cpuid-edx} (first %)))
+                                                  kernel-cpuid-ecx kernel-cpuid-edx
+                                                  ;; boot: the firmware
+                                                  ;; boundary is listed here
+                                                  ;; too, so a non-firmware
+                                                  ;; target is refused by the
+                                                  ;; verifier as well as by
+                                                  ;; amu's own target gate.
+                                                  ;; Two refusals, because a
+                                                  ;; gate on one route is not
+                                                  ;; a gate.
+                                                  kernel-system-table
+                                                  kernel-load-ptr
+                                                  kernel-uefi-call2
+                                                  kernel-jump-to} (first %)))
                      (tree-seq coll? seq (:functions program))))
       (reject! "bounded kernel memory operation requires the aiueos kernel target"
                {:target target}))
