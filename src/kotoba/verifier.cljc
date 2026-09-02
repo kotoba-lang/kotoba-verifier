@@ -1141,6 +1141,54 @@
             (reject! "runtime KIR f64 operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
+        ;; f32 scalar arithmetic, and the four width conversions
+        ;; (kotoba-lang docs/adr/ADR-kotoba-floating-point-on-native.md).
+        ;; Identical reasoning to the f64 arm above: each takes and returns one
+        ;; machine word -- here a binary32 pattern sign-extended from bit 31 --
+        ;; allocates nothing and touches no memory, so verification is an arity
+        ;; check plus a walk of the operands.
+        ;;
+        ;; This arm is deliberately NARROWER than the f64 one above, and the
+        ;; three families it omits are omitted for their own reasons, not by
+        ;; oversight:
+        ;;
+        ;;   f32-min / f32-max        x86 MINSS/MAXSS return the SECOND operand
+        ;;                            when either input is NaN; AArch64 FMIN and
+        ;;                            the KIR oracle return the NaN. The f64 arm
+        ;;                            above already admits that disagreement --
+        ;;                            recorded upstream, not inherited here.
+        ;;   the -checked conversions they trap in the oracle on inexactness and
+        ;;                            no backend emits the check.
+        ;;   the truncating float->int conversions
+        ;;                            three answers out of domain: x86 yields
+        ;;                            INT64_MIN, AArch64 saturates, the oracle
+        ;;                            traps.
+        ;;
+        ;; This verifier re-derives the admitted set INDEPENDENTLY of
+        ;; `kotoba.kir/only-native-word-typed-features?` on purpose, so being
+        ;; stricter than it is sound and being looser is not. Keeping the two
+        ;; omission lists identical is therefore load-bearing: an operation
+        ;; admitted there and refused here fails at verify time with
+        ;; "runtime KIR operation rejected", which is exactly how this arm's
+        ;; absence was found -- `amu compile --target x86_64 --jvm-free` on the
+        ;; f32 dot-product example, after every other layer already accepted it.
+        (contains? '#{f32-add f32-sub f32-mul f32-div
+                      f32-abs f32-neg f32-sqrt f32-from-bits f32-to-bits
+                      f32-eq f32-lt f32-le f32-gt f32-ge f32-unordered
+                      f32-to-f64-exact f64-to-f32-rounded
+                      i64-to-f32-rounded i64-to-f64-rounded} op)
+        (do
+          (when-not (= ({'f32-add 2 'f32-sub 2 'f32-mul 2 'f32-div 2
+                         'f32-abs 1 'f32-neg 1 'f32-sqrt 1
+                         'f32-from-bits 1 'f32-to-bits 1
+                         'f32-eq 2 'f32-lt 2 'f32-le 2 'f32-gt 2 'f32-ge 2
+                         'f32-unordered 2
+                         'f32-to-f64-exact 1 'f64-to-f32-rounded 1
+                         'i64-to-f32-rounded 1 'i64-to-f64-rounded 1} op)
+                       (count args))
+            (reject! "runtime KIR f32 operation arity rejected" {:operation op}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
         (contains? signatures op)
         (do
           (when-not (= (count (get signatures op)) (count args))
