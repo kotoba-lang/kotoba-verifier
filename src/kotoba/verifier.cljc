@@ -84,7 +84,17 @@
          '{kernel-try-lock-u32 3 kernel-unlock-u32 3
            kernel-atomic-add-u32 4 kernel-atomic-add-u64 4
            kernel-xchg-u32 4 kernel-xchg-u64 4
-           kernel-cmpxchg-u32 5 kernel-cmpxchg-u64 5}))
+           kernel-cmpxchg-u32 5 kernel-cmpxchg-u64 5
+           ;; simd: the f32 dot product (kotoba-gmir ADR 0010).
+           ;;
+           ;;   (kernel-dot-f32 a-base a-length b-base b-length count)
+           ;;
+           ;; Five arguments, and getting the arity wrong here would be worse
+           ;; than for the compare-exchanges above: four of the five are
+           ;; INTERCHANGEABLE i64 words at this layer -- two bases, two
+           ;; lengths -- so a short call would silently take a length as a
+           ;; base. It is the same argument for keeping arities as data.
+           kernel-dot-f32 5}))
 
 (defn- reject! [message data]
   (throw (ex-info message (assoc data :phase :verify))))
@@ -1188,6 +1198,20 @@
                       kernel-read-msr kernel-write-msr
                       kernel-cpuid-eax kernel-cpuid-ebx
                       kernel-cpuid-ecx kernel-cpuid-edx
+                      ;; simd: `kernel-xgetbv`. The `cpuid` four say what the
+                      ;; CPU implements; this says what the OPERATING SYSTEM
+                      ;; has agreed to save and restore across a context
+                      ;; switch, and a kernel that reads only the first and
+                      ;; uses YMM anyway does not fault -- it computes wrong
+                      ;; answers intermittently and only under load.
+                      ;;
+                      ;; It was landed in kotoba-gmir, kotoba-kir, kotoba-sema
+                      ;; and kotoba-native and NOT here, so it fell to the
+                      ;; terminal `:else` with "runtime KIR operation
+                      ;; rejected". Found by the first `.kotoba` program that
+                      ;; called it -- the f32 dot product's QEMU probe, which
+                      ;; reports the guard's own inputs.
+                      kernel-xgetbv
                       ;; boot: the UEFI firmware boundary. Their arities are
                       ;; re-derived below for the same reason every other
                       ;; entry's is -- independently of the frontend, because
@@ -1254,6 +1278,10 @@
                          'kernel-read-msr 1 'kernel-write-msr 2
                          'kernel-cpuid-eax 2 'kernel-cpuid-ebx 2
                          'kernel-cpuid-ecx 2 'kernel-cpuid-edx 2
+                         ;; simd: ONE, the XCR index. The `cpuid` four beside
+                         ;; it take TWO -- leaf and subleaf -- so this arity is
+                         ;; not the family's and is re-derived like every other.
+                         'kernel-xgetbv 1
                          'kernel-system-table 0 'kernel-load-ptr 2
                          'kernel-uefi-call2 4 'kernel-jump-to 2
                          'kernel-uefi-call4 6 'kernel-uefi-call6 8
@@ -1748,6 +1776,13 @@
                              ;; is not a compile-time value.
                              kernel-cpuid-eax kernel-cpuid-ebx
                              kernel-cpuid-ecx kernel-cpuid-edx
+                             ;; simd: XCR0 is a property of the machine AND of
+                             ;; the kernel running on it at the moment of the
+                             ;; read -- a kernel that has not enabled the YMM
+                             ;; state bit yet reads a different value five
+                             ;; instructions later. There is no compile-time
+                             ;; answer, and the caller BRANCHES on it.
+                             kernel-xgetbv
                              ;; sysops: both new families suppress the oracle
                              ;; for the reason `kotoba.kir/lower` lists them.
                              ;; An atomic read-modify-write and an `rdtsc` are
@@ -1785,7 +1820,16 @@
                              ;; vectors. Without this the oracle folds it,
                              ;; kotoba-kir traps, and a valid program fails
                              ;; to compile.
-                             kernel-isr-entry-address}))
+                             kernel-isr-entry-address
+                             ;; simd: the f32 dot product reads memory the
+                             ;; oracle has not been given, exactly as every
+                             ;; windowed load does. It is not in
+                             ;; `kernel-memory-operations` above -- its
+                             ;; operands are two regions and a count rather
+                             ;; than `base length index [value]` -- so it does
+                             ;; not arrive here with that table and has to be
+                             ;; named.
+                             kernel-dot-f32}))
 
 (defn- verify-runtime! [{:keys [target program code exports lowering limits fuel-abi context-abi]
                          profile-value :target-profile}]
@@ -1828,6 +1872,8 @@
                                                   kernel-read-msr kernel-write-msr
                                                   kernel-cpuid-eax kernel-cpuid-ebx
                                                   kernel-cpuid-ecx kernel-cpuid-edx
+                                                  ;; simd
+                                                  kernel-xgetbv
                                                   ;; sysops
                                                   kernel-try-lock-u32 kernel-unlock-u32
                                                   kernel-atomic-add-u32 kernel-atomic-add-u64

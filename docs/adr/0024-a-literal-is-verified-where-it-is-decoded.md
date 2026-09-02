@@ -1,4 +1,4 @@
-# ADR-0022: A literal is verified where it is decoded, and the pin that would have proved it costs 22 tests
+# ADR-0024: A literal is verified where it is decoded, and the pin that would have proved it costs 22 tests
 
 - Status: accepted
 - Date: 2026-09-02
