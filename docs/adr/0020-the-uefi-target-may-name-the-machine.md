@@ -45,3 +45,24 @@ two refusals, because a gate on one route is not a gate.
   correct: `:x86_64-aiueos-user-v1` is `:execution :process`.
 - Break-checked: removing `:x86_64-aiueos-uefi-v1` from the set turns the two
   admission cases red with exactly this ADR's message.
+
+## Addendum, same day: two lists that must agree, in two repositories
+
+Admitting the target was not enough. `verify-runtime!` also re-executes the
+ENTRY through the oracle and compares the result to the sealed value, unless
+the module is kernel-native -- and the list that decides that is a SECOND
+list, derived independently here and in `kotoba.kir/lower`.
+
+The four firmware operations were in kir's and not in this one. The failure
+that produced surfaces in neither list's terms: the compiler correctly seals
+no value, this side re-executes `(defn main [] (kernel-system-table))`, gets
+`:kernel-privileged-unavailable`, and refuses the artifact as "native artifact
+oracle evaluation rejected" -- an oracle mismatch it never had. Measured
+2026-09-02 while wiring amu's target-gate test.
+
+The set is now the private var `kernel-native-operations` rather than a `let`
+binding inside `verify-runtime!`, so `kotoba.verifier-test` can assert its
+membership directly instead of inferring it from a behaviour this repository's
+own kotoba-native pin cannot produce. Break-checked: removing
+`kernel-system-table` turns that test red naming the missing symbol.
+

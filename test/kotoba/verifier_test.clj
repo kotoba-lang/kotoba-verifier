@@ -1379,6 +1379,24 @@
            (kotoba.verifier/verify-artifact!
             (privileged-artifact :x86_64-kotoba-v1 (privileged-kir body))))))))
 
+(deftest the-firmware-boundary-marks-a-module-kernel-native
+  ;; This set decides whether the oracle re-executes an entry, and the same
+  ;; decision is made independently in `kotoba.kir/lower`. When the two
+  ;; disagree the failure surfaces in NEITHER one's terms: the compiler
+  ;; correctly seals no value, this side re-executes the entry, gets
+  ;; `:kernel-privileged-unavailable`, and refuses the artifact as "native
+  ;; artifact oracle evaluation rejected" -- an oracle mismatch it never had.
+  ;; Measured 2026-09-02: that is exactly what `(defn main []
+  ;; (kernel-system-table))` produced on the firmware target.
+  (let [operations @#'kotoba.verifier/kernel-native-operations]
+    (doseq [op (quote [kernel-system-table kernel-load-ptr
+                       kernel-uefi-call2 kernel-jump-to])]
+      (is (contains? operations op) op))
+    (testing "and the families that were already there stay there"
+      (doseq [op (quote [kernel-out-u8 kernel-read-msr kernel-cpuid-eax
+                         kernel-rdtsc kernel-load-u8])]
+        (is (contains? operations op) op)))))
+
 ;; ---------------------------------------------------------------------------
 ;; memwidth: the verifier rejects by ABSENCE, and this is what that costs.
 ;;
