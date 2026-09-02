@@ -1551,3 +1551,103 @@
     ;; Its only real argument is the literal 0, so a folder sees an operation
     ;; over one constant with nothing about it to suggest an effect.
     (is (contains? @#'kotoba.verifier/kernel-native-operations 'kernel-xgetbv))))
+
+;; boot-lit ───────────────────────────────────────────────────────────────────
+
+(defn- boot-lit-verify!
+  "Run the verifier's own KIR check over a program whose body is BODY.
+
+  Two other routes were tried first and both went red for the wrong reason,
+  which is why this helper exists and says so.
+
+  `privileged-artifact` CALLS the backend to produce `:code`, so a malformed
+  body never survives long enough to reach the verifier: the first run of this
+  suite reported `machine IR rejected: rodata-literal-malformed` for all eight
+  cases -- the BACKEND refusing, and green with every line of the verifier's
+  own check deleted. Substituting a body into an already-built artifact fails
+  earlier still, at `artifact integrity mismatch`, because the seal covers the
+  program.
+
+  So the check is invoked directly. It is the same function `verify-runtime!`
+  calls, and it runs before `emit` there."
+  [body]
+  (@#'kotoba.verifier/verify-program! (privileged-kir body)))
+
+(deftest boot-lit-the-wider-calls-and-the-literals-own-their-arities
+  ;; Re-derived here, independently of the frontend, for the reason every other
+  ;; arity in this file is: a wrong arity does not crash. A five-operand
+  ;; `kernel-uefi-call4` would pass whatever the register happened to hold as
+  ;; the fourth UEFI argument, and `AllocatePages` WRITES through its fourth.
+  (doseq [[body message]
+          [['(kernel-uefi-call4 1 2 3 4 5)
+            "runtime KIR kernel privileged operation arity rejected"]
+           ['(kernel-uefi-call6 1 2 3 4 5 6 7)
+            "runtime KIR kernel privileged operation arity rejected"]
+           ['(ucs2 "a" "b") "runtime KIR rodata literal arity rejected"]
+           ['(ucs2) "runtime KIR rodata literal arity rejected"]]]
+    (testing (str body)
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo (re-pattern message)
+           (boot-lit-verify! body))
+          (str body))))
+  (testing "and each is ADMITTED at its own arity"
+    ;; Without this direction the four assertions above pass with the arity
+    ;; ROWS deleted: `(get table op)` returns nil, `(= nil (count args))` is
+    ;; false, and the operation is rejected for having no row rather than for
+    ;; having the wrong count. Measured 2026-09-02 -- deleting both rows left
+    ;; the suite green until this was added.
+    (doseq [body ['(kernel-uefi-call4 1 2 3 4 5 6)
+                  '(kernel-uefi-call6 1 2 3 4 5 6 7 8)]]
+      (is (some? (boot-lit-verify! body)) (str body)))))
+
+(deftest boot-lit-a-literal-argument-must-be-a-string-and-well-formed
+  ;; The content check is the one worth arguing for. A malformed GUID has no
+  ;; failure mode downstream: sixteen bytes get placed either way and the
+  ;; firmware answers EFI_UNSUPPORTED, which is exactly what a machine WITHOUT
+  ;; that protocol answers.
+  (doseq [[body message]
+          [['(ucs2 42) "runtime KIR rodata literal requires a string literal"]
+           ['(guid "5B1B31A1-9562-11D2-8E3F-00A0C96972")
+            "runtime KIR rodata literal is malformed for its encoding"]
+           ['(bytes-literal "abc")
+            "runtime KIR rodata literal is malformed for its encoding"]
+           ['(bytes-literal-length "zz")
+            "runtime KIR rodata literal is malformed for its encoding"]]]
+    (testing (str body)
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo (re-pattern message)
+           (boot-lit-verify! body))
+          (str body))))
+  (testing "and a well-formed one passes the same check"
+    ;; The other direction, in the same file: a check that refused every
+    ;; literal would pass every assertion above.
+    (doseq [body ['(ucs2 "AIUEOS")
+                  '(guid "5B1B31A1-9562-11D2-8E3F-00A0C969723B")
+                  '(bytes-literal "deadbeef")
+                  '(bytes-literal-length "deadbeef")]]
+      (is (some? (boot-lit-verify! body)) (str body)))))
+
+(deftest boot-lit-the-literal-address-heads-mark-a-module-kernel-native
+  ;; This set has to agree with `kotoba.kir/lower`'s own. When the two disagree
+  ;; the failure surfaces in NEITHER one's terms: the compiler seals no value,
+  ;; this side re-executes the entry, gets the oracle's refusal, and reports an
+  ;; oracle mismatch it never had.
+  (let [operations @#'kotoba.verifier/kernel-native-operations]
+    (doseq [op '[ucs2 guid bytes-literal kernel-uefi-call4 kernel-uefi-call6]]
+      (is (contains? operations op) op))
+    (testing "and bytes-literal-length is deliberately NOT one"
+      ;; Its answer is a property of the literal text, so folding it is
+      ;; correct; kotoba-kir answers it rather than trapping, and marking a
+      ;; module kernel-native for it would cost a constant-folding pass for
+      ;; nothing.
+      (is (not (contains? operations 'bytes-literal-length))))))
+
+;; The literal TARGET rule -- which targets may name a literal pool at all --
+;; is asserted in amu (`kotoba.compiler.uefi-target-gate-test`), for the reason
+;; `an-ordinary-native-target-still-may-not` above records for the four
+;; ADR-0020 operations: reaching it here needs a backend that can EMIT a
+;; literal, and this repository pins kotoba-native itself, on purpose. Bumping
+;; that pin far enough imports 22 failures in `pinned-producer-*`, which pin
+;; allocator output shapes across a change this stream does not own (measured
+;; 2026-09-02: main is 67 tests / 425 assertions / 0 failures; the same suite
+;; at kotoba-native fdd580e is 67 / 429 / 30).
