@@ -1123,22 +1123,31 @@
                      {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
-        ;; f64 scalar arithmetic. Each takes and returns one machine word --
+        ;; f32/f64 scalar arithmetic. Each takes and returns one machine word --
         ;; an IEEE-754 bit pattern -- allocates nothing and touches no memory,
         ;; so verification is an arity check plus a walk of the operands,
         ;; exactly as for the integer arithmetic above.
-        (contains? '#{f64-add f64-sub f64-mul f64-div f64-min f64-max
+        (contains? '#{f32-add f32-sub f32-mul f32-div f32-min f32-max
+                      f32-abs f32-neg f32-sqrt f32-from-bits f32-to-bits
+                      f32-eq f32-lt f32-le f32-gt f32-ge f32-unordered
+                      f64-add f64-sub f64-mul f64-div f64-min f64-max
                       f64-abs f64-neg f64-sqrt f64-from-bits f64-to-bits
                       f64-eq f64-lt f64-le f64-gt f64-ge f64-unordered} op)
         (do
-          (when-not (= ({'f64-add 2 'f64-sub 2 'f64-mul 2 'f64-div 2
+          (when-not (= ({'f32-add 2 'f32-sub 2 'f32-mul 2 'f32-div 2
+                         'f32-min 2 'f32-max 2
+                         'f32-abs 1 'f32-neg 1 'f32-sqrt 1
+                         'f32-from-bits 1 'f32-to-bits 1
+                         'f32-eq 2 'f32-lt 2 'f32-le 2 'f32-gt 2 'f32-ge 2
+                         'f32-unordered 2
+                         'f64-add 2 'f64-sub 2 'f64-mul 2 'f64-div 2
                          'f64-min 2 'f64-max 2
                          'f64-abs 1 'f64-neg 1 'f64-sqrt 1
                          'f64-from-bits 1 'f64-to-bits 1
                          'f64-eq 2 'f64-lt 2 'f64-le 2 'f64-gt 2 'f64-ge 2
                          'f64-unordered 2} op)
                        (count args))
-            (reject! "runtime KIR f64 operation arity rejected" {:operation op}))
+            (reject! "runtime KIR floating operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
         (contains? signatures op)

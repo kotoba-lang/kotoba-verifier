@@ -467,6 +467,22 @@
     (testing (str body)
       (is (verifies? body)))))
 
+(deftest scalar-f32-family-is-admitted-at-its-kir-arities
+  (doseq [body ['(f32-add (f32-from-bits 1065353216)
+                          (f32-from-bits 1073741824))
+                '(f32-sub 1 2) '(f32-mul 1 2) '(f32-div 1 2)
+                '(f32-min 1 2) '(f32-max 1 2)
+                '(f32-abs 1) '(f32-neg 1) '(f32-sqrt 1)
+                '(f32-to-bits (f32-from-bits 1))
+                '(f32-eq 1 2) '(f32-lt 1 2) '(f32-le 1 2)
+                '(f32-gt 1 2) '(f32-ge 1 2) '(f32-unordered 1 2)]]
+    (testing (str body)
+      (is (verifies? body))))
+  (is (= "runtime KIR floating operation arity rejected"
+         (rejection '(f32-add 1))))
+  (is (= "runtime KIR floating operation arity rejected"
+         (rejection '(f32-sqrt 1 2)))))
+
 ;; The bang is not a new operation, it is a claim about the handle -- so a
 ;; different arity here would make it one, which is exactly what the KIR
 ;; interpreter refuses to let it become. Neither has an f64 twin, and an
