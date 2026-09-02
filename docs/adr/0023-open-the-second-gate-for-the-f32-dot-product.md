@@ -69,6 +69,20 @@ Removing both rows again turns all three new tests red by name:
   calls stop being rejected *by arity* and start being rejected by absence
 - `the-f32-dot-product-suppresses-the-compile-time-oracle` — membership
 
+## `kernel-xgetbv` was in the same condition, and nobody had noticed
+
+While the probe was being written it also called `kernel-xgetbv`, to report the
+AVX2 guard's own inputs so that "both arms agree" could not be an agreement
+between a sequence and itself. That failed here too, with the same message.
+
+`kernel-xgetbv` had been landed in kotoba-gmir, kotoba-kir, kotoba-sema and
+kotoba-native, with a whole ADR each, and never here. It joins the four
+privileged tables at arity **1** — the XCR index — where the `cpuid` four
+beside it take two, which is exactly why the number is re-derived rather than
+shared.
+
+Two operations, two streams, the same gate, found by the same thing: a program.
+
 ## What is landed here but not exercised here
 
 The end-to-end proof is an artifact, and it lives in aiueos: the probe compiles

@@ -1530,3 +1530,24 @@
     (is (not (contains? @#'kotoba.verifier/kernel-memory-operations
                         'kernel-dot-f32))
         "its shape is not `base length index [value]`, so it is not in that table")))
+
+(deftest the-extended-control-register-read-is-admitted-at-arity-one
+  ;; simd: `kernel-xgetbv` was landed in kotoba-gmir, kotoba-kir, kotoba-sema
+  ;; and kotoba-native and NOT here, so it fell to the terminal `:else` with
+  ;; "runtime KIR operation rejected". Nothing found that until a `.kotoba`
+  ;; program called it -- the f32 dot product's QEMU probe, which reports the
+  ;; AVX2 guard's own inputs so that "both arms agree" is not an agreement
+  ;; between a sequence and itself.
+  (is (nil? (sysops-rejection #(sysops-verify-expr '(kernel-xgetbv p0) 1))))
+  (is (nil? (sysops-rejection #(sysops-verify-expr '(kernel-xgetbv 0) 0)))
+      "a literal XCR index is the shape a real guard has")
+  (testing "arity ONE, where the cpuid four beside it take TWO"
+    (doseq [[form arity] [['(kernel-xgetbv) 0]
+                          ['(kernel-xgetbv p0 p1) 2]]]
+      (is (= "runtime KIR kernel privileged operation arity rejected"
+             (sysops-rejection #(sysops-verify-expr form arity)))
+          (str form))))
+  (testing "and it suppresses the compile-time oracle"
+    ;; Its only real argument is the literal 0, so a folder sees an operation
+    ;; over one constant with nothing about it to suggest an effect.
+    (is (contains? @#'kotoba.verifier/kernel-native-operations 'kernel-xgetbv))))
