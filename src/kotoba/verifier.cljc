@@ -1639,8 +1639,8 @@
 ;; memwidth: the windowed families come from the table, for the reason the
 ;; two sites above do.
 (def ^:private kernel-native-operations
-        (into (set (keys kernel-memory-operations))
-              '#{kernel-read-cr2
+  (into (set (keys kernel-memory-operations))
+        '#{kernel-read-cr2
                              kernel-boot-info kernel-read-cr0 kernel-write-cr0
                              kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                              kernel-read-cs kernel-page-fault-handler-address
@@ -1682,7 +1682,7 @@
                              ;; chose, memory it owns, code it runs, or a
                              ;; transfer that does not return.
                              kernel-system-table kernel-load-ptr
-                             kernel-uefi-call2 kernel-jump-to})
+                             kernel-uefi-call2 kernel-jump-to}))
 
 (defn- verify-runtime! [{:keys [target program code exports lowering limits fuel-abi context-abi]
                          profile-value :target-profile}]
