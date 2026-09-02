@@ -1589,7 +1589,16 @@
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo (re-pattern message)
            (boot-lit-verify! body))
-          (str body)))))
+          (str body))))
+  (testing "and each is ADMITTED at its own arity"
+    ;; Without this direction the four assertions above pass with the arity
+    ;; ROWS deleted: `(get table op)` returns nil, `(= nil (count args))` is
+    ;; false, and the operation is rejected for having no row rather than for
+    ;; having the wrong count. Measured 2026-09-02 -- deleting both rows left
+    ;; the suite green until this was added.
+    (doseq [body ['(kernel-uefi-call4 1 2 3 4 5 6)
+                  '(kernel-uefi-call6 1 2 3 4 5 6 7 8)]]
+      (is (some? (boot-lit-verify! body)) (str body)))))
 
 (deftest boot-lit-a-literal-argument-must-be-a-string-and-well-formed
   ;; The content check is the one worth arguing for. A malformed GUID has no
