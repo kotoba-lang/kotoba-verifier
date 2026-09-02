@@ -152,7 +152,31 @@
   #{:format :target :target-profile :value :kir-sha256 :lowering :fuel-abi :context-abi
     :effects :limits :code :program :exports :compatibility :sha256})
 
-(def ^:private max-native-fuel 1048576)
+;; fuel64: 2^20 was never a decision about how much work a native program may
+;; do. It is what this file has always said, and what
+;; `kotoba.compiler.nbb.cli/native-fuel!` says beside it, and the reason it
+;; never bit is that the OBJECT route does not read it -- `package-kernel-object`
+;; picks a per-call tier by symbol name and writes 512 into the artifact's own
+;; context, so the shipped aiueos objects run at 250,000,000 and 2,147,483,647
+;; through a ceiling of 1,048,576 without either number ever meeting the other.
+;; The IMAGE route does read it, so on that route this WAS the binding ceiling
+;; and it was two orders of magnitude below the object tiers.
+;;
+;; Raised to `ir/max-fuel` (2^53-1) rather than to a number chosen here: the
+;; constraint is a property of the counter, and `kotoba.kir` is where the
+;; counter lives.
+;;
+;; TAKEN FROM `kotoba.kir` DESPITE THIS FILE'S RULE ABOUT RE-DERIVING ITS OWN
+;; TABLES, and the distinction is deliberate. That rule exists so a producer
+;; cannot ratify its own admitted-operator set: if the frontend adds a head and
+;; this file imports the frontend's set, the check becomes a tautology and the
+;; safe direction is to reject by absence. A CEILING IS NOT A SET. Rejecting by
+;; absence here has no safe direction -- a verifier that admits LESS than the
+;; interpreter can count refuses valid artifacts, and one that admits MORE
+;; ratifies a budget the oracle cannot decrement. There is exactly one right
+;; answer and it is a property of the counter, not of the producer, so it is
+;; read from where the counter is rather than copied.
+(def ^:private max-native-fuel ir/max-fuel)
 
 (defn- admitted-native-fuel? [fuel]
   (and (guest-integer? fuel)
