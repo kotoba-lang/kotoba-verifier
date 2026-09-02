@@ -1286,7 +1286,15 @@
                       ;; table with whatever the previous expression left in
                       ;; the register, and the caller writes the answer into
                       ;; an IDT gate.
-                      kernel-isr-entry-address} op)
+                      kernel-isr-entry-address
+                      ;; boot-scratch: the writable region's base (kotoba-gmir
+                      ;; ADR-0013). Zero-arity, and the arity row below is
+                      ;; what this table is for: a one-argument
+                      ;; `kernel-scratch-region` would walk an operand nothing
+                      ;; reads, so a program that thought it was passing an
+                      ;; offset would get the region's base and write at the
+                      ;; wrong place inside it.
+                      kernel-scratch-region} op)
         (do
           ;; The port reads take ONE argument -- the port -- where the writes
           ;; take two. Verifying that independently of the frontend is the
@@ -1342,7 +1350,9 @@
                          'kernel-fence-full 0 'kernel-rdtsc 0 'kernel-rdtscp 0
                          'kernel-swapgs 0
                          ;; isr: ONE, the vector.
-                         'kernel-isr-entry-address 1} op)
+                         'kernel-isr-entry-address 1
+                         ;; boot-scratch: ZERO. It is an address, not a load.
+                         'kernel-scratch-region 0} op)
                        (count args))
             (reject! "runtime KIR kernel privileged operation arity rejected"
                      {:operation op}))
@@ -1375,6 +1385,28 @@
                      (first args))
             (reject! "runtime KIR rodata literal is malformed for its encoding"
                      {:operation op})))
+
+        ;; boot-scratch: the address of a function in the same module
+        ;; (kotoba-gmir ADR-0013). Verified independently of the frontend, and
+        ;; what is verified is the thing that has a failure mode: the NAME.
+        ;;
+        ;; The argument is not walked, for the reason the literals' is not --
+        ;; it is a piece of the source text and walking it would report an
+        ;; unbound local for a correct program. That makes the membership
+        ;; check the only thing standing between a misspelled name and a
+        ;; backend `lea` at a label it has to invent; kotoba-gmir refuses the
+        ;; same program, and this file exists to not depend on that.
+        (= op 'kernel-function-address)
+        (do
+          (when-not (= 1 (count args))
+            (reject! "runtime KIR function address arity rejected"
+                     {:operation op}))
+          (when-not (simple-symbol? (first args))
+            (reject! "runtime KIR function address requires a function name"
+                     {:operation op}))
+          (when-not (contains? signatures (first args))
+            (reject! "runtime KIR function address names no function in this module"
+                     {:operation op :name (first args)})))
 
         ;; f64 scalar arithmetic. Each takes and returns one machine word --
         ;; an IEEE-754 bit pattern -- allocates nothing and touches no memory,
@@ -1903,6 +1935,13 @@
                              ;; TEXT and folding it is correct, so it is left
                              ;; out here too.
                              ucs2 guid bytes-literal
+                             ;; boot-scratch: and the two heads that name a
+                             ;; place in the image ITSELF -- its `.data`
+                             ;; reservation and its function labels. Same
+                             ;; reason: `kotoba.kir` traps on both, so a
+                             ;; module missing from this set has its call
+                             ;; folded and fails to compile.
+                             kernel-scratch-region kernel-function-address
                              ;; isr: and the interrupt entry address, whose
                              ;; argument is a literal vector at every real
                              ;; call site -- an IDT is built by naming
@@ -2020,7 +2059,16 @@
                                                   ;; one route is not a gate.
                                                   ucs2 guid
                                                   bytes-literal
-                                                  bytes-literal-length})
+                                                  bytes-literal-length
+                                                  ;; boot-scratch: a `.data`
+                                                  ;; reservation and a
+                                                  ;; function label are
+                                                  ;; places in an image the
+                                                  ;; toolchain laid out, and
+                                                  ;; only the aiueos native
+                                                  ;; targets have one.
+                                                  kernel-scratch-region
+                                                  kernel-function-address})
                             (first %)))
                      (tree-seq coll? seq (:functions program))))
       (reject! "bounded kernel memory operation requires the aiueos kernel target"
