@@ -1486,7 +1486,8 @@
   [[:map (fn [p] (map? p))]
    [:keys (fn [p] (= #{:format :entry :exports :signature :effects :functions} (set (keys p))))]
    [:format (fn [p] (contains? #{:kotoba.kir/v3 :kotoba.kir/v4} (:format p)))]
-   ;; A module either has an entry -- `main`, zero-arity, host-readable result
+   ;; A module either has an entry -- `main`, a closed typed parameter vector,
+   ;; and a host-readable result
    ;; -- or it is a LIBRARY: no entry, no signature, and an export list that
    ;; names what it offers instead. The library shape is not a weaker version of
    ;; the entry shape; it is a different one, and each of its parts is checked
@@ -1494,7 +1495,13 @@
    ;; so "no entry" can never silently mean "no callable surface at all".
    [:entry (fn [p] (or (= 'main (:entry p))
                        (and (nil? (:entry p)) (seq (:exports p)))))]
-   [:signature-params (fn [p] (or (nil? (:entry p)) (= [] (:params (:signature p)))))]
+   [:signature-params
+    (fn [p]
+      (or (nil? (:entry p))
+          (let [params (:params (:signature p))]
+            (and (vector? params)
+                 (<= (count params) max-parameters)
+                 (every? native-boundary-type? params)))))]
    [:signature-result (fn [p] (or (nil? (:entry p))
                                   (entry-result-type? (:result (:signature p)))))]
    [:signature-keys (fn [p] (if (nil? (:entry p))
@@ -1615,11 +1622,16 @@
                            (reject! "runtime KIR function shape rejected"
                                     {:function (:name function)}))
                          [(:name function) (:params function)]))
-                     functions))]
+                     functions))
+          entry-function (some #(when (= (:entry program) (:name %)) %) functions)
+          entry-param-types (when entry-function
+                              (or (:param-types entry-function)
+                                  (vec (repeat (count (:params entry-function)) :i64))))]
     ;; Identity, in whichever of the two module shapes this is. Both require
     ;; every function name to be distinct and every export to name a function
     ;; that exists; only the entry shape additionally requires `main` to exist,
-    ;; be zero-arity, and be exported. The library shape requires a non-empty
+    ;; match its independently declared signature, and be exported. The library
+    ;; shape requires a non-empty
     ;; export list in its place -- checked here as well as in
     ;; `module-shape-checks`, since this is where "an export names nothing" is
     ;; caught and a library with no exports would otherwise verify vacuously.
@@ -1629,7 +1641,9 @@
                    (if (nil? (:entry program))
                      (seq (:exports program))
                      (and (contains? signatures 'main)
-                          (empty? (get signatures 'main))
+                          (= (count (get signatures 'main))
+                             (count (:params (:signature program))))
+                          (= entry-param-types (:params (:signature program)))
                           (some #{'main} (:exports program)))))
       (reject! "runtime KIR entry or function identity rejected" {}))
     (let [nodes (volatile! 0)
@@ -1787,6 +1801,12 @@
                {:target target}))
     (when-not (= expected-profile profile-value)
       (reject! "native target profile does not match target identity" {:target target}))
+    (let [expected-entry-arity (if (= :firmware (:execution expected-profile)) 2 0)]
+      (when-not (= expected-entry-arity
+                   (count (get-in program [:signature :params])))
+        (reject! "native entry arity does not match target boundary"
+                 {:target target :expected expected-entry-arity
+                  :actual (count (get-in program [:signature :params]))})))
     (when-not emit (reject! "not a native verifier target" {:target target}))
     (when-not (= expected-lowering lowering)
       (reject! "native runtime lowering mode is not admitted"
@@ -1904,6 +1924,7 @@
         ;; re-derive -- the check below then compares nil to nil, which is the
         ;; honest result rather than a skipped assertion.
         (when (and (empty? effects) (not kernel-native?)
+                   (empty? (get-in kexe [:program :signature :params]))
                    (some? (get-in kexe [:program :entry])))
           (try
             (ir/execute (:program kexe) (get-in kexe [:program :entry]) []

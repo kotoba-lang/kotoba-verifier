@@ -429,6 +429,21 @@
   (is (= :map (shape-condition "not a program"))
       "a non-map must fail the first condition rather than throw"))
 
+(deftest a-parameterized-entry-must-match-its-declared-signature
+  (let [program (-> ok-program
+                    (assoc :format :kotoba.kir/v4)
+                    (assoc :signature {:params [:i64 :i64] :result :i64})
+                    (assoc :functions
+                           [{:name 'main :params '[image system-table]
+                             :param-types [:i64 :i64]
+                             :result :i64 :effects #{}
+                             :body '(+ image (* 0 system-table))}]))]
+    (is (nil? (shape-condition program)))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"runtime KIR entry or function identity rejected"
+          (#'kotoba.verifier/verify-program!
+           (assoc-in program [:signature :params] [:i64]))))))
+
 ;; ---------------------------------------------------------------------------
 ;; vector-i64 / vector-f64 (ADR-2608030300)
 ;; ---------------------------------------------------------------------------
@@ -1322,18 +1337,28 @@
       :effects (:effects program)
       :compatibility
       (compatibility/descriptor
-       {:hir-format :kotoba.hir/v2 :kir-format (:format program)
+       {:hir-format (if (= :kotoba.kir/v4 (:format program))
+                      :kotoba.hir/v3 :kotoba.hir/v2)
+        :kir-format (:format program)
         :target target :target-profile profile
-        :value-abi :kotoba.i64/direct-v1})
+        :value-abi (if (= :kotoba.kir/v4 (:format program))
+                     :kotoba.typed/externref-v1
+                     :kotoba.i64/direct-v1)})
       :limits {:memory-bytes 65536 :fuel fuel :stack-bytes 4096}
       :code (mapv #(bit-and (int %) 0xff) (:code emitted))
       :program program
       :exports (:exports emitted)})))
 
-(defn- privileged-kir [body]
-  {:format :kotoba.kir/v3 :entry (quote main) :exports [(quote main)] :effects #{}
-   :signature {:params [] :result :i64}
-   :functions [{:name (quote main) :params [] :result :i64 :effects #{} :body body}]})
+(defn- privileged-kir [target body]
+  (let [firmware? (= target :x86_64-aiueos-uefi-v1)
+        params (if firmware? '[image system-table] [])
+        param-types (if firmware? [:i64 :i64] [])]
+    {:format (if firmware? :kotoba.kir/v4 :kotoba.kir/v3)
+     :entry (quote main) :exports [(quote main)] :effects #{}
+     :signature {:params param-types :result :i64}
+     :functions [(cond-> {:name (quote main) :params params :result :i64
+                          :effects #{} :body body}
+                   firmware? (assoc :param-types param-types))]}))
 
 (deftest the-uefi-target-may-name-the-machine
   ;; A UEFI application runs at CPL0 on an identity-mapped machine with boot
@@ -1351,11 +1376,11 @@
                 (quote (kernel-in-u8 233))]]
     (testing (str body " on the UEFI target")
       (let [artifact (privileged-artifact :x86_64-aiueos-uefi-v1
-                                          (privileged-kir body))]
+                                          (privileged-kir :x86_64-aiueos-uefi-v1 body))]
         (is (= artifact (kotoba.verifier/verify-artifact! artifact)))))
     (testing (str body " on the kernel target")
       (let [artifact (privileged-artifact :x86_64-aiueos-kernel-v1
-                                          (privileged-kir body))]
+                                          (privileged-kir :x86_64-aiueos-kernel-v1 body))]
         (is (= artifact (kotoba.verifier/verify-artifact! artifact)))))))
 
 (deftest an-ordinary-native-target-still-may-not
@@ -1377,7 +1402,8 @@
            clojure.lang.ExceptionInfo
            #"bounded kernel memory operation requires the aiueos kernel target"
            (kotoba.verifier/verify-artifact!
-            (privileged-artifact :x86_64-kotoba-v1 (privileged-kir body))))))))
+            (privileged-artifact :x86_64-kotoba-v1
+                                 (privileged-kir :x86_64-kotoba-v1 body))))))))
 
 (deftest the-firmware-boundary-marks-a-module-kernel-native
   ;; This set decides whether the oracle re-executes an entry, and the same
