@@ -61,4 +61,10 @@ the verifier's independently derived record or variant predicates.
 
 ```bash
 clojure -M:test
+nbb --classpath "src:test:$(clojure -Spath -M:test)" run-tests.cljs
 ```
+
+Both, not either. This verifier runs on two compiler hosts and they represent
+a `.kotoba` literal differently -- on nbb an integer literal is a JavaScript
+`bigint`, which `integer?` does not recognize. A rule checked only on the JVM
+is a rule the JDK-free route has never had checked (ADR-0021).
