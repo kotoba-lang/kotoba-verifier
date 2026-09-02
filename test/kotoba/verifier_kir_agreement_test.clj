@@ -1,0 +1,95 @@
+(ns kotoba.verifier-kir-agreement-test
+  "Two repositories maintain the same native floating-point admission list.
+  This asserts they still agree, and names the heads if they do not.
+
+  `kotoba.verifier` re-derives what native admits INDEPENDENTLY of
+  `kotoba.kir/only-native-word-typed-features?`, and that independence is the
+  point: being stricter than the oracle is sound, being looser is not. So this
+  is a test and not a require -- nothing here makes the verifier accept an
+  operation, it can only fail.
+
+  What it removes is silent drift, which has a measured cost. On 2026-09-02 the
+  f32 arm was missing from the verifier while kir admitted the family; the
+  symptom was `amu check` green and `amu compile --target x86_64 --jvm-free`
+  failing with `:error :verify` on the f32 dot-product example, after every
+  other layer had already accepted the program. SYSOPS met the same wall from
+  the other direction the same day. Neither was found by a check; both were
+  found by someone compiling something.
+
+  The two sides are:
+
+    kir       `kotoba.kir/native-floating-point-operations` -- the union of the
+              five sets `only-native-word-typed-features?` branches on
+    verifier  `#'kotoba.verifier/f64-operations` and `#'.../f32-operations` --
+              the two arms of `verify-expr!`
+
+  Both are the values the code uses, not descriptions kept alongside it."
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [kotoba.kir :as kir]
+            [kotoba.verifier]))
+
+(defn- verifier-heads []
+  (into (set (keys @#'kotoba.verifier/f64-operations))
+        (keys @#'kotoba.verifier/f32-operations)))
+
+(defn- oracle-heads [] (set kir/native-floating-point-operations))
+
+(defn- name-the-difference [oracle verifier]
+  (let [only-oracle (sort (set/difference oracle verifier))
+        only-verifier (sort (set/difference verifier oracle))]
+    (str "native float admission drift"
+         (when (seq only-oracle)
+           (str " -- admitted by kotoba.kir and REFUSED by the verifier: "
+                (str/join ", " only-oracle)
+                " (this shape compiles green and fails at verify time)"))
+         (when (seq only-verifier)
+           (str " -- accepted by the verifier and NOT admitted by kotoba.kir: "
+                (str/join ", " only-verifier)
+                " (the verifier is checking a language nobody can write)")))))
+
+(deftest the-two-native-float-admission-lists-agree
+  (let [oracle (oracle-heads)
+        verifier (verifier-heads)]
+    (testing "evidence floor -- two empty sets are equal and say nothing"
+      (is (<= 30 (count oracle)) (str "SCANNED " (count oracle) " oracle heads"))
+      (is (<= 30 (count verifier))
+          (str "SCANNED " (count verifier) " verifier heads")))
+    (testing "set equality, with the differing heads named"
+      (is (= oracle verifier) (name-the-difference oracle verifier)))))
+
+(deftest the-agreement-check-can-tell-the-two-directions-apart
+  ;; The message is the whole value of this test -- an `=` that fails printing
+  ;; two thirty-six-element sets does not say which head moved. Both directions
+  ;; are exercised against synthetic sets so the assertion is about the
+  ;; reporting, not about today's contents.
+  (let [oracle (oracle-heads)]
+    (testing "a head only the oracle has is reported as the verify-time failure"
+      (let [message (name-the-difference oracle (disj oracle 'f64-min))]
+        (is (str/includes? message "REFUSED by the verifier"))
+        (is (str/includes? message "f64-min"))
+        (is (not (str/includes? message "NOT admitted by kotoba.kir")))))
+    (testing "a head only the verifier has is reported the other way round"
+      (let [message (name-the-difference oracle (conj oracle 'f32-min))]
+        (is (str/includes? message "NOT admitted by kotoba.kir"))
+        (is (str/includes? message "f32-min"))
+        (is (not (str/includes? message "REFUSED by the verifier")))))
+    (testing "no difference, no accusation"
+      (let [message (name-the-difference oracle oracle)]
+        (is (not (str/includes? message "REFUSED")))
+        (is (not (str/includes? message "NOT admitted")))))))
+
+(deftest the-omissions-both-sides-intend-are-still-omitted-on-both-sides
+  ;; Equality alone would be satisfied by both sides admitting `f32-min`. These
+  ;; name the members whose ABSENCE is a decision, and one whose presence is.
+  (let [oracle (oracle-heads) verifier (verifier-heads)]
+    (doseq [op '[f32-min f32-max
+                 i64-to-f32-checked f32-to-i64-checked f32-to-i64-truncating
+                 i64-to-f64-checked f64-to-i64-checked f64-to-i64-truncating]]
+      (is (not (contains? oracle op)) (str op " must not be admitted by kir"))
+      (is (not (contains? verifier op))
+          (str op " must not be accepted by the verifier")))
+    (doseq [op '[f64-min f64-max f32-add f32-unordered i64-to-f32-rounded]]
+      (is (contains? oracle op) (str op " must stay admitted by kir"))
+      (is (contains? verifier op) (str op " must stay accepted by the verifier")))))
