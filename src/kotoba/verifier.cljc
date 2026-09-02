@@ -1097,6 +1097,15 @@
                       kernel-read-msr kernel-write-msr
                       kernel-cpuid-eax kernel-cpuid-ebx
                       kernel-cpuid-ecx kernel-cpuid-edx
+                      ;; boot: the UEFI firmware boundary. Their arities are
+                      ;; re-derived below for the same reason every other
+                      ;; entry's is -- independently of the frontend, because
+                      ;; a wrong arity here does not crash. `kernel-uefi-call2`
+                      ;; with three operands would call through
+                      ;; `[base+whatever-was-in-the-offset-slot]`, which is a
+                      ;; plausible-looking address.
+                      kernel-system-table kernel-load-ptr
+                      kernel-uefi-call2 kernel-jump-to
                       ;; sysops: barriers, the timestamp counter and the
                       ;; GS-base swap. All zero-arity, and the arity is what
                       ;; this table is for: a one-argument `kernel-fence-full`
@@ -1139,6 +1148,8 @@
                          'kernel-read-msr 1 'kernel-write-msr 2
                          'kernel-cpuid-eax 2 'kernel-cpuid-ebx 2
                          'kernel-cpuid-ecx 2 'kernel-cpuid-edx 2
+                         'kernel-system-table 0 'kernel-load-ptr 2
+                         'kernel-uefi-call2 4 'kernel-jump-to 2
                          'kernel-fence-load 0 'kernel-fence-store 0
                          'kernel-fence-full 0 'kernel-rdtsc 0 'kernel-rdtscp 0
                          'kernel-swapgs 0} op)
