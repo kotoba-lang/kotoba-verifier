@@ -15,6 +15,72 @@
                      [kotoba.kir :as ir]
                      [kotoba.kir.target :as target-profile])))
 
+;; memwidth: the checked-memory surface, four transfer widths by four window
+;; tiers plus the element-indexed slice family (amu ADR 0285).
+;;
+;; This verifier rejects by ABSENCE and re-derives its own tables on purpose,
+;; so a width that reaches `kotoba.compiler.frontend` and `kotoba.kir` and not
+;; this file is refused here. That is not hypothetical: it is exactly what
+;; happened the first time a slice fixture was compiled -- "runtime KIR
+;; operation rejected", with every upstream gate already open. Both gates have
+;; to open, which is the design (this repository's own history with
+;; `string-contains?` records the same shape), and it is why the names are
+;; written out again here rather than imported from the frontend.
+(def ^:private kernel-memory-operations
+  '{
+   kernel-load-u8        3
+   kernel-store-u8       4
+   kernel-load-u8-4k     3
+   kernel-store-u8-4k    4
+   kernel-load-u8-16k    3
+   kernel-store-u8-16k   4
+   kernel-load-u8-64k    3
+   kernel-store-u8-64k   4
+   kernel-load-u16       3
+   kernel-store-u16      4
+   kernel-load-u16-4k    3
+   kernel-store-u16-4k   4
+   kernel-load-u16-16k   3
+   kernel-store-u16-16k  4
+   kernel-load-u16-64k   3
+   kernel-store-u16-64k  4
+   kernel-load-u32       3
+   kernel-store-u32      4
+   kernel-load-u32-4k    3
+   kernel-store-u32-4k   4
+   kernel-load-u32-16k   3
+   kernel-store-u32-16k  4
+   kernel-load-u32-64k   3
+   kernel-store-u32-64k  4
+   kernel-load-u64       3
+   kernel-store-u64      4
+   kernel-load-u64-4k    3
+   kernel-store-u64-4k   4
+   kernel-load-u64-16k   3
+   kernel-store-u64-16k  4
+   kernel-load-u64-64k   3
+   kernel-store-u64-64k  4
+   slice-load-u8         3
+   slice-store-u8        4
+   slice-load-u16        3
+   slice-store-u16       4
+   slice-load-u32        3
+   slice-store-u32       4
+   slice-load-u64        3
+   slice-store-u64       4
+   kernel-subregion 4})
+
+(def ^:private kernel-memory-arities
+  "The checked-memory surface plus the lock pair and the general atomics. The
+  compare-exchanges take five arguments -- base, length, index, comparand,
+  replacement -- and getting that wrong would silently take the replacement as
+  the comparand, so the arities are data rather than a shared constant."
+  (merge kernel-memory-operations
+         '{kernel-try-lock-u32 3 kernel-unlock-u32 3
+           kernel-atomic-add-u32 4 kernel-atomic-add-u64 4
+           kernel-xchg-u32 4 kernel-xchg-u64 4
+           kernel-cmpxchg-u32 5 kernel-cmpxchg-u64 5}))
+
 (defn- reject! [message data]
   (throw (ex-info message (assoc data :phase :verify))))
 
@@ -1061,23 +1127,9 @@
         ;; the compare-exchanges take FIVE arguments, not four. A four-argument
         ;; `kernel-cmpxchg-u32` would silently take the replacement as the
         ;; comparand and store whatever the register happened to hold.
-        (contains? '#{kernel-load-u8 kernel-load-u8-4k kernel-load-u8-16k
-                      kernel-store-u8 kernel-store-u8-4k kernel-subregion
-                      kernel-load-u32 kernel-store-u32
-                      kernel-try-lock-u32 kernel-unlock-u32
-                      kernel-atomic-add-u32 kernel-atomic-add-u64
-                      kernel-xchg-u32 kernel-xchg-u64
-                      kernel-cmpxchg-u32 kernel-cmpxchg-u64} op)
+        (contains? kernel-memory-arities op)
         (do
-          (when-not (= ({'kernel-load-u8 3 'kernel-load-u8-4k 3
-                         'kernel-load-u8-16k 3 'kernel-store-u8 4
-                         'kernel-store-u8-4k 4 'kernel-subregion 4
-                         'kernel-load-u32 3 'kernel-store-u32 4
-                         'kernel-try-lock-u32 3 'kernel-unlock-u32 3
-                         'kernel-atomic-add-u32 4 'kernel-atomic-add-u64 4
-                         'kernel-xchg-u32 4 'kernel-xchg-u64 4
-                         'kernel-cmpxchg-u32 5 'kernel-cmpxchg-u64 5} op)
-                       (count args))
+          (when-not (= (get kernel-memory-arities op) (count args))
             (reject! "runtime KIR kernel memory operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
@@ -1589,10 +1641,13 @@
     ;; all without a port write.
     (when (and (not (contains? #{:x86_64-aiueos-kernel-v1 :aarch64-aiueos-kernel-v1
                                  :x86_64-aiueos-uefi-v1} target))
-               (some #(and (seq? %) (contains? '#{kernel-load-u8 kernel-load-u8-4k
-                                                  kernel-load-u8-16k kernel-store-u8
-                                                  kernel-store-u8-4k kernel-load-u32 kernel-store-u32
-                                                  kernel-boot-info kernel-read-cr2
+               ;; memwidth: the whole checked-memory surface, from the table,
+               ;; so a new width cannot reach a NON-kernel target by being
+               ;; missing from a second hand-written list.
+               (some #(and (seq? %)
+                           (contains?
+                            (into (set (keys kernel-memory-operations))
+                                  '#{kernel-boot-info kernel-read-cr2
                                                   kernel-read-cr0 kernel-write-cr0
                                                   kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                                                   kernel-read-cs kernel-page-fault-handler-address
@@ -1633,7 +1688,8 @@
                                                   kernel-system-table
                                                   kernel-load-ptr
                                                   kernel-uefi-call2
-                                                  kernel-jump-to} (first %)))
+                                                  kernel-jump-to})
+                            (first %)))
                      (tree-seq coll? seq (:functions program))))
       (reject! "bounded kernel memory operation requires the aiueos kernel target"
                {:target target}))
@@ -1747,9 +1803,10 @@
                                 :else :kotoba.i64/direct-v1)})]
     (when-not (= expected compatibility)
       (reject! "native compatibility metadata rejected" {:target target})))
-  (let [kernel-operations '#{kernel-load-u8 kernel-load-u8-4k kernel-load-u8-16k
-                             kernel-store-u8 kernel-store-u8-4k kernel-read-cr2
-                             kernel-load-u32 kernel-store-u32
+  ;; memwidth: from the table, for the reason the two sites above are.
+  (let [kernel-operations
+        (into (set (keys kernel-memory-operations))
+              '#{kernel-read-cr2
                              kernel-boot-info kernel-read-cr0 kernel-write-cr0
                              kernel-read-cr3 kernel-write-cr3 kernel-invlpg
                              kernel-read-cs kernel-page-fault-handler-address
@@ -1783,7 +1840,7 @@
                              kernel-xchg-u32 kernel-xchg-u64
                              kernel-cmpxchg-u32 kernel-cmpxchg-u64
                              kernel-fence-load kernel-fence-store kernel-fence-full
-                             kernel-rdtsc kernel-rdtscp kernel-swapgs}
+                             kernel-rdtsc kernel-rdtscp kernel-swapgs})
         kernel-native? (some #(and (seq? %) (contains? kernel-operations (first %)))
                              (tree-seq coll? seq (get-in kexe [:program :functions])))
         expected-value
