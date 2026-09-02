@@ -7,6 +7,7 @@
             [kotoba.kir.compatibility :as compatibility]
             [kotoba.kir.target :as target]
             [kotoba.native.aggregate-abi :as aggregate-abi]
+            [kotoba.mir :as mir]
             [kotoba.native.machine-ir :as machine]
             [kotoba.native.x86-64 :as x86-64]
             [kotoba.verifier]
@@ -186,6 +187,43 @@
         "the exported entry follows the internal callee in the code image")
     (is (pos? (get-in sealed [:exports 'main :length])))))
 
+;; ── what a producer must do with a value a call cannot be trusted with ──────
+;;
+;; These three used to pin SPILL SLOTS as literals: "the caller has exactly one
+;; frame slot", "exactly one spill-store and one spill-load", "the fifth entry
+;; argument is stored to slot 0". That was true of the allocator that had four
+;; scratch registers and nothing else.
+;;
+;; kotoba-native `7b25376` gave the allocator a preserved tier -- RBX/R12-R15
+;; on x86-64, X19-X26 on AArch64 -- so a value that must survive a call now
+;; goes to a callee-saved register instead of the stack, and these programs
+;; spill nothing at all. That is strictly better and it made the pins false:
+;; measured 2026-09-02, bumping the kotoba-native pin from `a2023fe` to main
+;; turned 22 assertions in this suite red, all of them here, and NONE of them
+;; because a value stopped surviving its call.
+;;
+;; So what is pinned now is the property those literals stood for: a value the
+;; call cannot be trusted with is MATERIALISED exactly once, in a home the call
+;; cannot clobber, and a function that makes no call materialises nothing. A
+;; frame slot and a callee-saved register are both such a home, and which one
+;; the allocator picks is its business.
+;;
+;; `kotoba.mir/saved-registers` is read out of the SAME closure the pinned
+;; backend comes from -- deliberately not a top-level dependency, because the
+;; question is which registers THIS backend's frame saves, not which ones some
+;; other pin would.
+
+(defn- materialised-homes
+  "How many values FUNCTION parks where a call cannot reach them: frame slots
+  plus the callee-saved registers its frame has to save and restore."
+  [target function]
+  (+ (:mc/frame-slots function)
+     (count (mir/saved-registers target (:mc/instructions function)))))
+
+(defn- encodings-of [target function suffix]
+  (filter #(= (keyword (name target) suffix) (:mc/encoding %))
+          (:mc/instructions function)))
+
 (deftest pinned-producer-materializes-only-the-live-across-call-value
   (let [kir {:format :kotoba.kir/v4
              :exports ['main]
@@ -194,16 +232,20 @@
               {:name 'main :params ['x] :result :i64
                :body '(let [live 10] (+ live (inc-one x)))}]}]
     (doseq [target [:x86-64 :aarch64]]
-      (let [mc (->> kir machine/lower-kir-module
-                    (machine/compile-gmir target))
-            caller (second (:mc/functions mc))
-            encodings (map :mc/encoding (:mc/instructions caller))]
+      (let [[callee caller] (:mc/functions (->> kir machine/lower-kir-module
+                                                (machine/compile-gmir target)))]
         (is (= :call-live (:mc/frame-policy caller)) target)
-        (is (= 1 (:mc/frame-slots caller)) target)
-        (is (= 1 (count (filter #{(keyword (name target) "spill-store")}
-                                encodings))) target)
-        (is (= 1 (count (filter #{(keyword (name target) "spill-load")}
-                                encodings))) target)))))
+        (is (= 1 (materialised-homes target caller))
+            (str target ": `live` crosses the call, so exactly one value is"
+                 " parked where the call cannot clobber it"))
+        (testing "a slot home costs exactly one store and one load; a register home costs neither"
+          (is (= (:mc/frame-slots caller) (count (encodings-of target caller "spill-store")))
+              target)
+          (is (= (:mc/frame-slots caller) (count (encodings-of target caller "spill-load")))
+              target))
+        (testing "and the leaf callee materialises nothing -- it has nothing to survive"
+          (is (= :allocator (:mc/frame-policy callee)) target)
+          (is (= 0 (materialised-homes target callee)) target))))))
 
 (deftest pinned-producer-assigns-four-entry-arguments-in-parallel
   (let [kir {:format :kotoba.kir/v4
@@ -243,7 +285,13 @@
                               (:mc/instructions callee))))
             target)))))
 
-(deftest pinned-producer-lazily-spills-only-the-fifth-entry-argument
+(deftest pinned-producer-parks-only-the-fifth-entry-argument
+  ;; Five arguments fill the call-argument registers exactly, so the fifth is
+  ;; the one whose home the transfer would otherwise overwrite while shuffling
+  ;; the other four. It is parked and restored into its argument register
+  ;; immediately before the transfer -- which is the invariant. Whether the
+  ;; park is a stack slot or a callee-saved register is the allocator's choice
+  ;; and it has made both.
   (let [kir {:format :kotoba.kir/v4
              :exports ['main]
              :functions
@@ -255,10 +303,7 @@
       (let [[callee caller]
             (:mc/functions (->> kir machine/lower-kir-module
                                 (machine/compile-gmir target)))
-            functions [callee caller]
             argument-encoding (keyword (name target) "argument")
-            store-encoding (keyword (name target) "spill-store")
-            load-encoding (keyword (name target) "spill-load")
             tail-call-encoding (keyword (name target) "tail-call")
             expected-inputs (if (= :x86-64 target)
                               [:x86-64/rdi :x86-64/rsi :x86-64/rdx
@@ -266,7 +311,7 @@
                               [:aarch64/x0 :aarch64/x1 :aarch64/x2
                                :aarch64/x3 :aarch64/x4])
             fifth-input (expected-inputs 4)
-            caller-instructions (:mc/instructions caller)
+            caller-instructions (vec (:mc/instructions caller))
             transfer-index (first (keep-indexed
                                    (fn [index instruction]
                                      (when (= tail-call-encoding
@@ -274,28 +319,39 @@
                                        index))
                                    caller-instructions))]
         (is (= [:allocator :call-live]
-               (mapv :mc/frame-policy functions)) target)
-        (is (= [1 1] (mapv :mc/frame-slots functions)) target)
-        (doseq [function functions]
-          (let [instructions (:mc/instructions function)
-                stores (filterv #(= store-encoding (:mc/encoding %)) instructions)
-                loads (filterv #(= load-encoding (:mc/encoding %)) instructions)]
-            (is (= expected-inputs
-                   (mapv :mir/dst
-                         (filter #(= argument-encoding (:mc/encoding %))
-                                 instructions)))
-                [target (:mc/name function)])
-            (is (= [{:mc/op :mc/instruction :mc/encoding store-encoding
-                     :mir/src fifth-input :mir/slot 0}]
-                   stores) [target (:mc/name function)])
-            (is (= 1 (count loads)) [target (:mc/name function)])
-            (is (= 0 (:mir/slot (first loads)))
-                [target (:mc/name function)])))
-        (is (= {:mc/op :mc/instruction :mc/encoding load-encoding
-                :mir/dst fifth-input :mir/slot 0}
-               (get caller-instructions (dec transfer-index))) target)
+               (mapv :mc/frame-policy [callee caller])) target)
+        (testing "the callee calls nothing, so it parks nothing"
+          (is (= 0 (materialised-homes target callee)) target))
+        (testing "the caller parks exactly one value: the fifth argument"
+          (is (= 1 (materialised-homes target caller)) target)
+          (is (= (:mc/frame-slots caller)
+                 (count (encodings-of target caller "spill-store"))) target)
+          (is (= (:mc/frame-slots caller)
+                 (count (encodings-of target caller "spill-load"))) target))
+        (doseq [function [callee caller]]
+          (is (= expected-inputs
+                 (mapv :mir/dst
+                       (filter #(= argument-encoding (:mc/encoding %))
+                               (:mc/instructions function))))
+              [target (:mc/name function)]))
+        (testing "and the park is restored into the fifth argument register last"
+          (let [restore (get caller-instructions (dec transfer-index))]
+            (is (= fifth-input (:mir/dst restore))
+                (str target ": the instruction before the transfer writes "
+                     fifth-input ", got " (pr-str restore)))
+            (is (contains? #{(keyword (name target) "spill-load")
+                             (keyword (name target) "move")}
+                           (:mc/encoding restore))
+                (str target ": from a slot or from the register it was parked in"))
+            (when (= (keyword (name target) "move") (:mc/encoding restore))
+              (is (contains? (set (mir/preserved-registers target)) (:mir/src restore))
+                  (str target ": a register park must be a callee-saved one -- a"
+                       " caller-saved source would not have survived a real call")))))
         (is (= tail-call-encoding
-               (:mc/encoding (get caller-instructions transfer-index))) target)))))
+               (:mc/encoding (get caller-instructions transfer-index))) target)
+        (is (= expected-inputs
+               (:mir/arguments (get caller-instructions transfer-index)))
+            (str target ": the transfer still carries all five in order"))))))
 
 (defn- vector-fixture []
   (edn/read-string (slurp (io/resource "conformance/dual-surface-v1.edn"))))
@@ -1726,8 +1782,10 @@
 ;; is asserted in amu (`kotoba.compiler.uefi-target-gate-test`), for the reason
 ;; `an-ordinary-native-target-still-may-not` above records for the four
 ;; ADR-0020 operations: reaching it here needs a backend that can EMIT a
-;; literal, and this repository pins kotoba-native itself, on purpose. Bumping
-;; that pin far enough imports 22 failures in `pinned-producer-*`, which pin
-;; allocator output shapes across a change this stream does not own (measured
-;; 2026-09-02: main is 67 tests / 425 assertions / 0 failures; the same suite
-;; at kotoba-native fdd580e is 67 / 429 / 30).
+;; literal, and this repository pins kotoba-native itself, on purpose.
+;;
+;; That pin used to be stuck: bumping it imported 22 failures in
+;; `pinned-producer-*`. It is not stuck any more -- the 22 were three tests
+;; pinning spill slots as literals across an allocator that gained a
+;; callee-saved tier, and they now pin the property instead. The pin is at
+;; kotoba-native main.

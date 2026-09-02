@@ -1,4 +1,4 @@
-# ADR 0027: open the second gate for the fused dequantize-and-dot family
+# ADR 0029: open the second gate for the fused dequantize-and-dot family
 
 Status: accepted. Date: 2026-09-02.
 
