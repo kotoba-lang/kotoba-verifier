@@ -224,6 +224,35 @@
   '{option-some 1 option-none 0 option-some? 1 option-value 2
     result-ok 1 result-err 1 result-ok? 1 result-value 2 result-error 2})
 
+;; ── the floating-point arms, as data ─────────────────────────────────────
+;;
+;; These two arities-and-heads tables were literals inside `verify-expr!`.
+;; They are named here for one reason: `kotoba.verifier-kir-agreement-test`
+;; compares their union against `kotoba.kir/native-floating-point-operations`
+;; and fails naming any head only one side has.
+;;
+;; That comparison is a TEST, not a require. This namespace still re-derives
+;; the admitted set independently of the oracle, because being stricter than it
+;; is sound and being looser is not -- see the long note at the f32 arm. What
+;; the test removes is only the possibility of the two drifting silently, which
+;; on 2026-09-02 produced a green `amu check` followed by `:error :verify`.
+(def ^:private f64-operations
+  '{f64-add 2 f64-sub 2 f64-mul 2 f64-div 2
+    f64-min 2 f64-max 2
+    f64-abs 1 f64-neg 1 f64-sqrt 1
+    f64-from-bits 1 f64-to-bits 1
+    f64-eq 2 f64-lt 2 f64-le 2 f64-gt 2 f64-ge 2
+    f64-unordered 2})
+
+(def ^:private f32-operations
+  '{f32-add 2 f32-sub 2 f32-mul 2 f32-div 2
+    f32-abs 1 f32-neg 1 f32-sqrt 1
+    f32-from-bits 1 f32-to-bits 1
+    f32-eq 2 f32-lt 2 f32-le 2 f32-gt 2 f32-ge 2
+    f32-unordered 2
+    f32-to-f64-exact 1 f64-to-f32-rounded 1
+    i64-to-f32-rounded 1 i64-to-f64-rounded 1})
+
 (def ^:private native-clock-request-type
   [:variant :kotoba.clock/request [[:wall :bool] [:monotonic :bool]]])
 
@@ -1327,17 +1356,9 @@
         ;; an IEEE-754 bit pattern -- allocates nothing and touches no memory,
         ;; so verification is an arity check plus a walk of the operands,
         ;; exactly as for the integer arithmetic above.
-        (contains? '#{f64-add f64-sub f64-mul f64-div f64-min f64-max
-                      f64-abs f64-neg f64-sqrt f64-from-bits f64-to-bits
-                      f64-eq f64-lt f64-le f64-gt f64-ge f64-unordered} op)
+        (contains? f64-operations op)
         (do
-          (when-not (= ({'f64-add 2 'f64-sub 2 'f64-mul 2 'f64-div 2
-                         'f64-min 2 'f64-max 2
-                         'f64-abs 1 'f64-neg 1 'f64-sqrt 1
-                         'f64-from-bits 1 'f64-to-bits 1
-                         'f64-eq 2 'f64-lt 2 'f64-le 2 'f64-gt 2 'f64-ge 2
-                         'f64-unordered 2} op)
-                       (count args))
+          (when-not (= (get f64-operations op) (count args))
             (reject! "runtime KIR f64 operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
@@ -1352,11 +1373,17 @@
         ;; three families it omits are omitted for their own reasons, not by
         ;; oversight:
         ;;
-        ;;   f32-min / f32-max        x86 MINSS/MAXSS return the SECOND operand
-        ;;                            when either input is NaN; AArch64 FMIN and
-        ;;                            the KIR oracle return the NaN. The f64 arm
-        ;;                            above already admits that disagreement --
-        ;;                            recorded upstream, not inherited here.
+        ;;   f32-min / f32-max        an admission through seven repositories
+        ;;                            that has not been made, NOT an encoding
+        ;;                            gap. Until 2026-09-02 the reason given
+        ;;                            here was that x86 MINSS/MAXSS return the
+        ;;                            SECOND operand on a NaN while AArch64 and
+        ;;                            the oracle return the NaN, and that the
+        ;;                            f64 arm above already admitted that
+        ;;                            disagreement. It did, measurably; that is
+        ;;                            now repaired in kotoba-native
+        ;;                            (`x86-f64-min-max`) and the corrected
+        ;;                            sequence carries over to binary32.
         ;;   the -checked conversions they trap in the oracle on inexactness and
         ;;                            no backend emits the check.
         ;;   the truncating float->int conversions
@@ -1372,20 +1399,9 @@
         ;; "runtime KIR operation rejected", which is exactly how this arm's
         ;; absence was found -- `amu compile --target x86_64 --jvm-free` on the
         ;; f32 dot-product example, after every other layer already accepted it.
-        (contains? '#{f32-add f32-sub f32-mul f32-div
-                      f32-abs f32-neg f32-sqrt f32-from-bits f32-to-bits
-                      f32-eq f32-lt f32-le f32-gt f32-ge f32-unordered
-                      f32-to-f64-exact f64-to-f32-rounded
-                      i64-to-f32-rounded i64-to-f64-rounded} op)
+        (contains? f32-operations op)
         (do
-          (when-not (= ({'f32-add 2 'f32-sub 2 'f32-mul 2 'f32-div 2
-                         'f32-abs 1 'f32-neg 1 'f32-sqrt 1
-                         'f32-from-bits 1 'f32-to-bits 1
-                         'f32-eq 2 'f32-lt 2 'f32-le 2 'f32-gt 2 'f32-ge 2
-                         'f32-unordered 2
-                         'f32-to-f64-exact 1 'f64-to-f32-rounded 1
-                         'i64-to-f32-rounded 1 'i64-to-f64-rounded 1} op)
-                       (count args))
+          (when-not (= (get f32-operations op) (count args))
             (reject! "runtime KIR f32 operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
