@@ -1303,6 +1303,18 @@
                       ;; happened to hold as the fourth UEFI argument, and
                       ;; `AllocatePages` writes through its fourth argument.
                       kernel-uefi-call4 kernel-uefi-call6
+                      ;; fwstore: the allocation that answers with an address
+                      ;; (kotoba-gmir ADR-0030). SIX operands, and its arity is
+                      ;; the one in this table whose consequence is worst if it
+                      ;; is wrong. The operand this verifier cannot see is the
+                      ;; one that is NOT there: the out-pointer the firmware
+                      ;; writes through belongs to the emitted frame, so a
+                      ;; miscounted operand list does not fail to compile, it
+                      ;; hands `AllocatePages` a page count that was meant to
+                      ;; be a memory type -- and kotoba-sema has already
+                      ;; certified a window over the pages on the strength of
+                      ;; the count it read.
+                      kernel-uefi-alloc-region
                       ;; sysops: barriers, the timestamp counter and the
                       ;; GS-base swap. All zero-arity, and the arity is what
                       ;; this table is for: a one-argument `kernel-fence-full`
@@ -1378,6 +1390,9 @@
                          'kernel-system-table 0 'kernel-load-ptr 2
                          'kernel-uefi-call2 4 'kernel-jump-to 2
                          'kernel-uefi-call4 6 'kernel-uefi-call6 8
+                         ;; fwstore: SIX -- base, slot, allocate type, memory
+                         ;; type, page count, address hint.
+                         'kernel-uefi-alloc-region 6
                          'kernel-fence-load 0 'kernel-fence-store 0
                          'kernel-fence-full 0 'kernel-rdtsc 0 'kernel-rdtscp 0
                          'kernel-swapgs 0
@@ -1974,6 +1989,12 @@
                              ;; module missing from this set has its call
                              ;; folded and fails to compile.
                              kernel-scratch-region kernel-function-address
+                             ;; fwstore: and the allocation, which runs
+                             ;; firmware code and answers with a physical page
+                             ;; address. `kotoba.kir` traps on it, so a module
+                             ;; missing from this set has its call folded and
+                             ;; fails to compile.
+                             kernel-uefi-alloc-region
                              ;; isr: and the interrupt entry address, whose
                              ;; argument is a literal vector at every real
                              ;; call site -- an IDT is built by naming
@@ -2107,7 +2128,13 @@
                                                   ;; only the aiueos native
                                                   ;; targets have one.
                                                   kernel-scratch-region
-                                                  kernel-function-address})
+                                                  kernel-function-address
+                                                  ;; fwstore: the allocation
+                                                  ;; calls through a pointer
+                                                  ;; read out of firmware
+                                                  ;; memory, exactly as the
+                                                  ;; three calls above do.
+                                                  kernel-uefi-alloc-region})
                             (first %)))
                      (tree-seq coll? seq (:functions program))))
       (reject! "bounded kernel memory operation requires the aiueos kernel target"

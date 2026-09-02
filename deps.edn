@@ -12,6 +12,8 @@
         {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
          ;; fuel64: 233bd6bb exports `max-fuel`, the fuel ceiling this file now
          ;; READS rather than restates (ADR 0049 -- a ceiling is not a set).
+         ;; fwstore: and it contains d8b0e679, which admits
+         ;; `kernel-uefi-alloc-region` at the oracle (kotoba-kir ADR-0269).
          :git/sha "233bd6bb6b15912679c529611a42c8af15f2354c"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
@@ -49,7 +51,7 @@
         ;; call cannot clobber) and the pin below is at kotoba-native main.
         io.github.kotoba-lang/kotoba-gmir
         {:git/url "https://github.com/kotoba-lang/kotoba-gmir.git"
-         :git/sha "645bd21dea90f939b42cfcd1a0419a541ef9dfa3"}
+         :git/sha "d4e040b2978f4547e9698f3cc305176f49cac35e"}
         ;; Advanced 2026-09-02 from a2023fed (302 commits behind) now that the
         ;; `pinned-producer-*` blocker above is diagnosed and repaired. A pin
         ;; that cannot advance stops exercising every new operation through
@@ -57,7 +59,7 @@
         ;; with the exact producer.
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
-         :git/sha "70984ea591af78fd3697f9e78aa7daa6573a5cbe"}
+         :git/sha "adeb1b0fa5bcd2dd18a657c7e3bd3c4acbd630ae"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}
