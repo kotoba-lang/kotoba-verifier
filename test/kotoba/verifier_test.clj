@@ -1587,13 +1587,30 @@
                         'kernel-dot-f32))
         "its shape is not `base length index [value]`, so it is not in that table")))
 
+(def ^:private dequant-dot-heads
+  ;; dequant-iq: seven formats. The four codebook ones (kotoba-gmir ADR 0027)
+  ;; arrive with the same arity and the same shape -- their codebook is the
+  ;; compiler's read-only data rather than a caller's region, so there is no
+  ;; third base and nothing about this layer changes.
+  '[kernel-dequant-dot-q8-0 kernel-dequant-dot-q4-k kernel-dequant-dot-q6-k
+    kernel-dequant-dot-iq4-xs kernel-dequant-dot-iq2-s
+    kernel-dequant-dot-iq3-xxs kernel-dequant-dot-iq3-s])
+
+(deftest the-fused-dequant-dot-family-is-seven-formats
+  ;; A row added to the arity table and not to the native-operations set (or
+  ;; the reverse) is the failure this counts: the first rejects by absence
+  ;; with "runtime KIR operation rejected", the second lets the compile-time
+  ;; oracle try to fold a read of memory it was never given.
+  (is (= 7 (count dequant-dot-heads)))
+  (doseq [head dequant-dot-heads]
+    (is (contains? @#'kotoba.verifier/kernel-native-operations head) (str head))))
+
 (deftest the-fused-dequant-dot-family-is-admitted-at-arity-five
   ;; dequant: same shape as the f32 dot product, same reason for it being
   ;; here, and asserted PER FORMAT -- this namespace rejects by absence, so a
   ;; missing row fails with "runtime KIR operation rejected" for a program
   ;; every other repository admits.
-  (doseq [head '[kernel-dequant-dot-q8-0 kernel-dequant-dot-q4-k
-                 kernel-dequant-dot-q6-k]]
+  (doseq [head dequant-dot-heads]
     (is (nil? (sysops-rejection
                #(sysops-verify-expr (list head 'p0 'p1 'p2 'p3 'p4) 5)))
         (str head))
@@ -1605,8 +1622,7 @@
   ;; Four of the five arguments are interchangeable i64 words at this layer,
   ;; so a short call does not fail on a type -- it silently takes a length as
   ;; a base and folds whatever is at that address.
-  (doseq [head '[kernel-dequant-dot-q8-0 kernel-dequant-dot-q4-k
-                 kernel-dequant-dot-q6-k]
+  (doseq [head dequant-dot-heads
           [form arity] [[(list head 'p0 'p1 'p2 'p3) 4]
                         [(list head 'p0 'p1 'p2) 3]
                         [(list head 'p0 'p1 'p2 'p3 'p4 'p5) 6]]]
@@ -1619,8 +1635,7 @@
   ;; It reads memory the oracle has not been given, and it does not arrive in
   ;; `kernel-native-operations` with the windowed table, so it has to be
   ;; named -- once per format.
-  (doseq [head '[kernel-dequant-dot-q8-0 kernel-dequant-dot-q4-k
-                 kernel-dequant-dot-q6-k]]
+  (doseq [head dequant-dot-heads]
     (is (contains? @#'kotoba.verifier/kernel-native-operations head) (str head))
     (is (not (contains? @#'kotoba.verifier/kernel-memory-operations head))
         (str head " has no `base length index [value]` shape"))))
