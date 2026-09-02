@@ -1,4 +1,4 @@
-# ADR 0025: Open the second gate for the extended state enable
+# ADR 0026: Open the second gate for the extended state enable
 
 ## Status
 

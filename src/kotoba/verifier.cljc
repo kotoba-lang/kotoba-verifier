@@ -1,6 +1,10 @@
 (ns kotoba.verifier
   #?(:clj (:require [clojure.set :as set]
                     [kotoba.artifact.core :as artifact]
+                    ;; boot-lit: the single decoder for a read-only literal.
+                    ;; Re-deriving the GUID grammar here would be a second
+                    ;; thing that has to agree about what a literal is.
+                    [kotoba.gmir :as gmir]
                     [kotoba.native.aarch64 :as aarch64]
                     [kotoba.native.x86-64 :as x86-64]
                     [kotoba.kir.compatibility :as compatibility-profile]
@@ -8,6 +12,7 @@
                     [kotoba.kir.target :as target-profile])
      :cljs (:require [clojure.set :as set]
                      [kotoba.artifact.core :as artifact]
+                     [kotoba.gmir :as gmir]
                      [kotoba.native.aarch64 :as aarch64]
                      [kotoba.native.x86-64 :as x86-64]
                      [kotoba.kir.cljs-i64 :as i64]
@@ -1253,6 +1258,12 @@
                       ;; plausible-looking address.
                       kernel-system-table kernel-load-ptr
                       kernel-uefi-call2 kernel-jump-to
+                      ;; boot-lit: and the two wider calls, whose arities are
+                      ;; re-derived below for the same reason. A five-operand
+                      ;; `kernel-uefi-call4` would pass whatever the register
+                      ;; happened to hold as the fourth UEFI argument, and
+                      ;; `AllocatePages` writes through its fourth argument.
+                      kernel-uefi-call4 kernel-uefi-call6
                       ;; sysops: barriers, the timestamp counter and the
                       ;; GS-base swap. All zero-arity, and the arity is what
                       ;; this table is for: a one-argument `kernel-fence-full`
@@ -1319,6 +1330,7 @@
                          'kernel-xsetbv 2
                          'kernel-system-table 0 'kernel-load-ptr 2
                          'kernel-uefi-call2 4 'kernel-jump-to 2
+                         'kernel-uefi-call4 6 'kernel-uefi-call6 8
                          'kernel-fence-load 0 'kernel-fence-store 0
                          'kernel-fence-full 0 'kernel-rdtsc 0 'kernel-rdtscp 0
                          'kernel-swapgs 0
@@ -1328,6 +1340,34 @@
             (reject! "runtime KIR kernel privileged operation arity rejected"
                      {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        ;; boot-lit: read-only literals (kotoba-gmir ADR-0011). Verified
+        ;; independently of the frontend, like everything else in this file,
+        ;; and the CONTENT is verified rather than only the arity -- a
+        ;; malformed GUID has no failure mode downstream. Sixteen bytes get
+        ;; placed either way and the firmware answers EFI_UNSUPPORTED, which
+        ;; is what a machine WITHOUT that protocol answers.
+        ;;
+        ;; The argument is not walked: it is a piece of the source text, not
+        ;; an expression, and walking it would admit a `let`-bound string --
+        ;; which the backend cannot place, because there is no runtime under
+        ;; a firmware image to place it at.
+        (contains? '#{ucs2 guid bytes-literal bytes-literal-length} op)
+        (do
+          (when-not (= 1 (count args))
+            (reject! "runtime KIR rodata literal arity rejected"
+                     {:operation op}))
+          (when-not (string? (first args))
+            (reject! "runtime KIR rodata literal requires a string literal"
+                     {:operation op}))
+          (when-not (gmir/rodata-content?
+                     (case op
+                       ucs2 :utf-16le-nul
+                       guid :guid-mixed-endian
+                       :hex-bytes)
+                     (first args))
+            (reject! "runtime KIR rodata literal is malformed for its encoding"
+                     {:operation op})))
 
         ;; f64 scalar arithmetic. Each takes and returns one machine word --
         ;; an IEEE-754 bit pattern -- allocates nothing and touches no memory,
@@ -1807,6 +1847,17 @@
                              ;; transfer that does not return.
                              kernel-system-table kernel-load-ptr
                              kernel-uefi-call2 kernel-jump-to
+                             ;; boot-lit: the two wider calls, same reason.
+                             kernel-uefi-call4 kernel-uefi-call6
+                             ;; boot-lit: and the three literal ADDRESS heads.
+                             ;; This set has to agree with `kotoba.kir/lower`'s
+                             ;; own -- when the two disagree the failure
+                             ;; surfaces in neither one's terms. `kotoba.kir`
+                             ;; deliberately leaves `bytes-literal-length` out,
+                             ;; because its answer is a property of the literal
+                             ;; TEXT and folding it is correct, so it is left
+                             ;; out here too.
+                             ucs2 guid bytes-literal
                              ;; isr: and the interrupt entry address, whose
                              ;; argument is a literal vector at every real
                              ;; call site -- an IDT is built by naming
@@ -1900,7 +1951,25 @@
                                                   kernel-system-table
                                                   kernel-load-ptr
                                                   kernel-uefi-call2
-                                                  kernel-jump-to})
+                                                  kernel-jump-to
+                                                  ;; boot-lit: and the two
+                                                  ;; wider ones.
+                                                  kernel-uefi-call4
+                                                  kernel-uefi-call6
+                                                  ;; boot-lit: a literal POOL
+                                                  ;; is a place in an image
+                                                  ;; the backend laid out,
+                                                  ;; and only the aiueos
+                                                  ;; native targets have one.
+                                                  ;; This list is already
+                                                  ;; scoped to those targets,
+                                                  ;; so the literals belong
+                                                  ;; in it -- amu refuses
+                                                  ;; them too, and a gate on
+                                                  ;; one route is not a gate.
+                                                  ucs2 guid
+                                                  bytes-literal
+                                                  bytes-literal-length})
                             (first %)))
                      (tree-seq coll? seq (:functions program))))
       (reject! "bounded kernel memory operation requires the aiueos kernel target"
