@@ -1551,3 +1551,46 @@
     ;; Its only real argument is the literal 0, so a folder sees an operation
     ;; over one constant with nothing about it to suggest an effect.
     (is (contains? @#'kotoba.verifier/kernel-native-operations 'kernel-xgetbv))))
+
+(deftest the-extended-state-enable-is-admitted-at-its-three-arities
+  ;; xsave: the write half of the same feature check. Opened here as a SECOND
+  ;; gate, independently of kotoba-sema -- `kernel-xgetbv` was landed in four
+  ;; repositories and not this one, fell to the terminal `:else` with "runtime
+  ;; KIR operation rejected", and nothing found it until a .kotoba program
+  ;; called it. Being late twice for the same reason would be a pattern.
+  (testing "each is admitted at its declared arity"
+    (doseq [[form arity] [['(kernel-read-cr4) 0]
+                          ['(kernel-write-cr4 p0) 1]
+                          ['(kernel-write-cr4 262144) 0]
+                          ['(kernel-xsetbv p0 p1) 2]
+                          ['(kernel-xsetbv 0 7) 0]]]
+      (is (nil? (sysops-rejection #(sysops-verify-expr form arity))) (str form))))
+  ;; The arity table here is re-derived rather than imported, and this is the
+  ;; row that shows why: a one-argument `kernel-xsetbv` would take the VALUE as
+  ;; the XCR index and write EDX:EAX from whatever the register happened to
+  ;; hold -- into the register that governs whether the machine saves its
+  ;; vector state across a context switch. A wrong arity here does not crash.
+  (testing "and refuses every other arity, with the reason pinned"
+    (doseq [[form arity] [['(kernel-read-cr4 p0) 1]
+                          ['(kernel-write-cr4) 0]
+                          ['(kernel-write-cr4 p0 p1) 2]
+                          ['(kernel-xsetbv) 0]
+                          ['(kernel-xsetbv p0) 1]
+                          ['(kernel-xsetbv p0 p1 p2) 3]]]
+      (is (= "runtime KIR kernel privileged operation arity rejected"
+             (sysops-rejection #(sysops-verify-expr form arity)))
+          (str form))))
+  (testing "and all three suppress the compile-time oracle"
+    ;; `(kernel-read-cr4)` is zero-arity and `(kernel-xsetbv 0 7)` is two
+    ;; literals, so a folder sees nothing to suggest an effect. A disagreement
+    ;; with `kotoba.kir/lower` here surfaces in neither side's terms: the
+    ;; compiler seals no value, this side re-executes the entry, and the
+    ;; artifact is refused as an oracle mismatch it never had.
+    (doseq [op '[kernel-read-cr4 kernel-write-cr4 kernel-xsetbv]]
+      (is (contains? @#'kotoba.verifier/kernel-native-operations op) (str op))))
+  ;; There is no `kernel-write-cr2`: CR2 is written by the CPU when a page
+  ;; fault is taken, so a kernel that wrote it would be lying to its own
+  ;; handler. Asserted rather than merely absent.
+  (testing "and there is no CR2 write"
+    (is (= "runtime KIR operation rejected"
+           (sysops-rejection #(sysops-verify-expr '(kernel-write-cr2 p0) 1))))))
