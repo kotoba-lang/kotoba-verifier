@@ -101,7 +101,15 @@
            ;; call would silently take a length as a base.
            kernel-dequant-dot-q8-0 5
            kernel-dequant-dot-q4-k 5
-           kernel-dequant-dot-q6-k 5}))
+           kernel-dequant-dot-q6-k 5
+           ;; dequant-iq: the four codebook formats (kotoba-gmir ADR 0027).
+           ;; Same arity, and the codebook is not among the arguments: it
+           ;; belongs to the format and reaches the machine as read-only data
+           ;; the compiler places, so there is no third region to declare.
+           kernel-dequant-dot-iq4-xs 5
+           kernel-dequant-dot-iq2-s 5
+           kernel-dequant-dot-iq3-xxs 5
+           kernel-dequant-dot-iq3-s 5}))
 
 (defn- reject! [message data]
   (throw (ex-info message (assoc data :phase :verify))))
@@ -1963,7 +1971,14 @@
                              ;; them arrives with that table either.
                              kernel-dequant-dot-q8-0
                              kernel-dequant-dot-q4-k
-                             kernel-dequant-dot-q6-k}))
+                             kernel-dequant-dot-q6-k
+                             ;; dequant-iq: and the four codebook formats,
+                             ;; which read the same two regions plus a table
+                             ;; the oracle has not been given either.
+                             kernel-dequant-dot-iq4-xs
+                             kernel-dequant-dot-iq2-s
+                             kernel-dequant-dot-iq3-xxs
+                             kernel-dequant-dot-iq3-s}))
 
 (defn- verify-runtime! [{:keys [target program code exports lowering limits fuel-abi context-abi]
                          profile-value :target-profile}]
