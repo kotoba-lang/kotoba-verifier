@@ -1574,6 +1574,58 @@
         (reject! "runtime KIR lowering budget exhausted" {:cost cost}))))
   program))
 
+
+;; boot: hoisted out of `verify-runtime!` so it can be asserted directly.
+;; This list decides whether the ORACLE re-executes an entry, and the same
+;; decision is made independently in `kotoba.kir/lower`. When the two
+;; disagree the failure surfaces in neither one's terms: the compiler
+;; correctly seals no value, this side re-executes the entry, gets
+;; `:kernel-privileged-unavailable`, and refuses the artifact as an oracle
+;; mismatch it never had. Measured 2026-09-02 on the four operations below.
+(def ^:private kernel-native-operations
+  '#{kernel-load-u8 kernel-load-u8-4k kernel-load-u8-16k
+                             kernel-store-u8 kernel-store-u8-4k kernel-read-cr2
+                             kernel-load-u32 kernel-store-u32
+                             kernel-boot-info kernel-read-cr0 kernel-write-cr0
+                             kernel-read-cr3 kernel-write-cr3 kernel-invlpg
+                             kernel-read-cs kernel-page-fault-handler-address
+                             kernel-rt-timer-handler-address
+                             kernel-page-fault-recovery-handler-address
+                             kernel-configure-page-fault-recovery kernel-load-idt
+                             kernel-double-fault-handler-address
+                             kernel-configure-double-fault-ist kernel-load-gdt-tss
+                             kernel-probe-guard-write kernel-probe-text-write kernel-probe-nx-execute
+                             kernel-probe-recoverable-guard-write kernel-probe-double-fault
+                             kernel-cli kernel-sti kernel-hlt kernel-pause
+                             kernel-out-u8 kernel-out-u32
+                             kernel-in-u8 kernel-in-u32
+                             kernel-read-msr kernel-write-msr
+                             ;; The `cpuid` four suppress the oracle here for
+                             ;; the same reason `kotoba.kir/lower` lists them:
+                             ;; their operands are literals at every real call
+                             ;; site, so an oracle has every structural reason
+                             ;; to try to evaluate them, and a machine property
+                             ;; is not a compile-time value.
+                             kernel-cpuid-eax kernel-cpuid-ebx
+                             kernel-cpuid-ecx kernel-cpuid-edx
+                             ;; sysops: both new families suppress the oracle
+                             ;; for the reason `kotoba.kir/lower` lists them.
+                             ;; An atomic read-modify-write and an `rdtsc` are
+                             ;; not compile-time values, and the lock pair
+                             ;; belongs here for the same reason and was
+                             ;; missing.
+                             kernel-try-lock-u32 kernel-unlock-u32
+                             kernel-atomic-add-u32 kernel-atomic-add-u64
+                             kernel-xchg-u32 kernel-xchg-u64
+                             kernel-cmpxchg-u32 kernel-cmpxchg-u64
+                             kernel-fence-load kernel-fence-store kernel-fence-full
+                             kernel-rdtsc kernel-rdtscp kernel-swapgs
+     ;; boot: the four UEFI firmware operations, for the same reason the MSR
+     ;; pair is here -- there is nothing the oracle may pre-answer about a
+     ;; pointer the firmware chose, memory it owns, code it runs, or a
+     ;; transfer that does not return.
+     kernel-system-table kernel-load-ptr kernel-uefi-call2 kernel-jump-to})
+
 (defn- verify-runtime! [{:keys [target program code exports lowering limits fuel-abi context-abi]
                          profile-value :target-profile}]
   (let [backend (target-profile/backend target)
@@ -1747,43 +1799,7 @@
                                 :else :kotoba.i64/direct-v1)})]
     (when-not (= expected compatibility)
       (reject! "native compatibility metadata rejected" {:target target})))
-  (let [kernel-operations '#{kernel-load-u8 kernel-load-u8-4k kernel-load-u8-16k
-                             kernel-store-u8 kernel-store-u8-4k kernel-read-cr2
-                             kernel-load-u32 kernel-store-u32
-                             kernel-boot-info kernel-read-cr0 kernel-write-cr0
-                             kernel-read-cr3 kernel-write-cr3 kernel-invlpg
-                             kernel-read-cs kernel-page-fault-handler-address
-                             kernel-rt-timer-handler-address
-                             kernel-page-fault-recovery-handler-address
-                             kernel-configure-page-fault-recovery kernel-load-idt
-                             kernel-double-fault-handler-address
-                             kernel-configure-double-fault-ist kernel-load-gdt-tss
-                             kernel-probe-guard-write kernel-probe-text-write kernel-probe-nx-execute
-                             kernel-probe-recoverable-guard-write kernel-probe-double-fault
-                             kernel-cli kernel-sti kernel-hlt kernel-pause
-                             kernel-out-u8 kernel-out-u32
-                             kernel-in-u8 kernel-in-u32
-                             kernel-read-msr kernel-write-msr
-                             ;; The `cpuid` four suppress the oracle here for
-                             ;; the same reason `kotoba.kir/lower` lists them:
-                             ;; their operands are literals at every real call
-                             ;; site, so an oracle has every structural reason
-                             ;; to try to evaluate them, and a machine property
-                             ;; is not a compile-time value.
-                             kernel-cpuid-eax kernel-cpuid-ebx
-                             kernel-cpuid-ecx kernel-cpuid-edx
-                             ;; sysops: both new families suppress the oracle
-                             ;; for the reason `kotoba.kir/lower` lists them.
-                             ;; An atomic read-modify-write and an `rdtsc` are
-                             ;; not compile-time values, and the lock pair
-                             ;; belongs here for the same reason and was
-                             ;; missing.
-                             kernel-try-lock-u32 kernel-unlock-u32
-                             kernel-atomic-add-u32 kernel-atomic-add-u64
-                             kernel-xchg-u32 kernel-xchg-u64
-                             kernel-cmpxchg-u32 kernel-cmpxchg-u64
-                             kernel-fence-load kernel-fence-store kernel-fence-full
-                             kernel-rdtsc kernel-rdtscp kernel-swapgs}
+  (let [kernel-operations kernel-native-operations
         kernel-native? (some #(and (seq? %) (contains? kernel-operations (first %)))
                              (tree-seq coll? seq (get-in kexe [:program :functions])))
         expected-value
