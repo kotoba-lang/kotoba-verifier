@@ -1277,3 +1277,104 @@
   (is (= "runtime KIR operation rejected"
          (sysops-rejection
           #(sysops-verify-expr '(kernel-cmpxchg-u16 p0 p1 p2 p3 p4) 5)))))
+;; boot: which target may name the machine directly.
+;; ---------------------------------------------------------------------------
+
+(defn- privileged-artifact
+  "`native-artifact`, retargeted. Everything the runtime check compares --
+  profile, lowering, fuel ABI, context ABI, code, exports -- is identical
+  across these three targets, because they share the `:x86_64-kotoba-v1`
+  backend. The ONLY thing that varies is the target keyword, which is what
+  makes this a test of the target rule rather than of anything else."
+  [target kir]
+  (let [program (select-keys kir [:format :entry :exports :signature
+                                  :effects :functions])
+        emitted (x86-64/emit-program program)
+        profile (target/profile target)
+        fuel 512]
+    (artifact/seal
+     {:format :kotoba.kexe/v1
+      :target target
+      :target-profile profile
+      :value nil
+      :kir-sha256 (artifact/sha256 program)
+      :lowering :runtime-sysv-v1
+      :fuel-abi {:mode :hidden-context-r9 :initial fuel}
+      :context-abi {:version 4 :fuel-offset 8 :allow-bitmap-offset 16
+                    :allow-bitmap-bytes 32 :cap-call-offset 48
+                    :pair-new-offset 56 :pair-first-offset 64
+                    :pair-second-offset 72 :pair-capacity 4096
+                    :kgraph-assert-offset 80 :kgraph-get-offset 88
+                    :kgraph-count-offset 96 :kgraph-entity-at-offset 104
+                    :kgraph-capacity 4096
+                    :string-equal-offset 112 :string-concat-offset 120
+                    :typed-cap-call-offset 128
+                    :string-substring-offset 136
+                    :string-code-point-at-offset 144
+                    :string-pool-capacity 65536
+                    :vector-new-empty-offset 152 :vector-conj-offset 160
+                    :vector-count-offset 168 :vector-at-offset 176
+                    :vector-assoc-offset 184 :vector-drop-offset 192
+                    :vector-alloc-offset 200
+                    :vector-assoc-in-place-offset 208
+                    :vector-capacity 4096
+                    :vector-item-capacity 65536}
+      :effects (:effects program)
+      :compatibility
+      (compatibility/descriptor
+       {:hir-format :kotoba.hir/v2 :kir-format (:format program)
+        :target target :target-profile profile
+        :value-abi :kotoba.i64/direct-v1})
+      :limits {:memory-bytes 65536 :fuel fuel :stack-bytes 4096}
+      :code (mapv #(bit-and (int %) 0xff) (:code emitted))
+      :program program
+      :exports (:exports emitted)})))
+
+(defn- privileged-kir [body]
+  {:format :kotoba.kir/v3 :entry (quote main) :exports [(quote main)] :effects #{}
+   :signature {:params [] :result :i64}
+   :functions [{:name (quote main) :params [] :result :i64 :effects #{} :body body}]})
+
+(deftest the-uefi-target-may-name-the-machine
+  ;; A UEFI application runs at CPL0 on an identity-mapped machine with boot
+  ;; services live. Refusing it a port write was refusing the target its own
+  ;; profile describes -- and it is why aiueos's BOOTX64.EFI is still C: a
+  ;; bootloader cannot say anything without one.
+  ;;
+  ;; The bodies here are deliberately the OLD privileged operations rather
+  ;; than the four new firmware ones. This repository pins kotoba-native
+  ;; itself, on purpose (see deps.edn), and that pin predates their encodings;
+  ;; a body this repo's own backend cannot emit would fail at `emit` and say
+  ;; nothing about the target rule. The refusal cases below need no emitter,
+  ;; because the target check runs before it.
+  (doseq [body [(quote (kernel-out-u8 233 75))
+                (quote (kernel-in-u8 233))]]
+    (testing (str body " on the UEFI target")
+      (let [artifact (privileged-artifact :x86_64-aiueos-uefi-v1
+                                          (privileged-kir body))]
+        (is (= artifact (kotoba.verifier/verify-artifact! artifact)))))
+    (testing (str body " on the kernel target")
+      (let [artifact (privileged-artifact :x86_64-aiueos-kernel-v1
+                                          (privileged-kir body))]
+        (is (= artifact (kotoba.verifier/verify-artifact! artifact)))))))
+
+(deftest an-ordinary-native-target-still-may-not
+  ;; The same bodies, the same artifact shape, one different keyword.
+  ;;
+  ;; The four firmware operations are NOT here, and the reason is the rule
+  ;; about tests that go red for the wrong reason. Measured 2026-09-02 at this
+  ;; repository's own kotoba-native pin: `(kernel-load-ptr 4096 64)` on
+  ;; `:x86_64-kotoba-v1` throws "aggregate ABI rejected:
+  ;; call-abi-not-admitted", because a backend that predates the operation
+  ;; reads it as a call to an unknown function -- a refusal that would still
+  ;; happen with the target rule deleted. Listing them would have added four
+  ;; green assertions that discriminate nothing. Their target gate is tested
+  ;; in amu, where the toolchain is pinned new enough to emit them.
+  (doseq [body [(quote (kernel-out-u8 233 75))
+                (quote (kernel-in-u8 233))]]
+    (testing (str body " is refused for x86_64-kotoba-v1")
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"bounded kernel memory operation requires the aiueos kernel target"
+           (kotoba.verifier/verify-artifact!
+            (privileged-artifact :x86_64-kotoba-v1 (privileged-kir body))))))))
