@@ -1211,3 +1211,69 @@
     (is (= "runtime KIR record projection rejected"
            (handle-outcome result (list 'let ['h '(mk)]
                                         (list 'record-get rec 'h :nope)))))))
+
+;; ---------------------------------------------------------------------------
+;; sysops: the general atomics and the x86 system operations.
+;;
+;; This namespace re-derives its own kernel operation tables rather than
+;; importing the frontend's, and it rejects by ABSENCE: an operation missing
+;; from them fails with "runtime KIR operation rejected" no matter what the
+;; compiler admitted. Both new families were missing, and so was the target
+;; gate's own list -- which is exactly the two-gate shape kotoba-kir's own
+;; comment records for `string-contains?`: "Both gates had to open."
+;; ---------------------------------------------------------------------------
+
+(defn- sysops-verify-expr [form arity]
+  (#'kotoba.verifier/verify-expr!
+   form
+   (into #{} (map #(symbol (str "p" %))) (range arity))
+   {} 0 (volatile! 0) (volatile! {:effects #{} :calls #{}})))
+
+(defn- sysops-rejection [thunk]
+  (try (thunk) nil
+       (catch clojure.lang.ExceptionInfo e (ex-message e))))
+
+(deftest sysops-kernel-operations-are-admitted-with-their-own-arities
+  (doseq [[form arity] [['(kernel-atomic-add-u32 p0 p1 p2 p3) 4]
+                        ['(kernel-atomic-add-u64 p0 p1 p2 p3) 4]
+                        ['(kernel-xchg-u32 p0 p1 p2 p3) 4]
+                        ['(kernel-xchg-u64 p0 p1 p2 p3) 4]
+                        ['(kernel-cmpxchg-u32 p0 p1 p2 p3 p4) 5]
+                        ['(kernel-cmpxchg-u64 p0 p1 p2 p3 p4) 5]
+                        ['(kernel-fence-load) 0]
+                        ['(kernel-fence-store) 0]
+                        ['(kernel-fence-full) 0]
+                        ['(kernel-rdtsc) 0]
+                        ['(kernel-rdtscp) 0]
+                        ['(kernel-swapgs) 0]]]
+    (testing (str form)
+      (is (nil? (sysops-rejection #(sysops-verify-expr form arity))) form))))
+
+(deftest sysops-kernel-operations-pin-their-arity-independently
+  ;; The reason this table is re-derived here rather than imported: an emitter
+  ;; handed a four-argument compare-exchange would take the replacement as the
+  ;; comparand and store whatever the register happened to hold.
+  (doseq [[form arity reason]
+          [['(kernel-cmpxchg-u32 p0 p1 p2 p3) 4
+            "runtime KIR kernel memory operation arity rejected"]
+           ['(kernel-cmpxchg-u64 p0 p1 p2 p3) 4
+            "runtime KIR kernel memory operation arity rejected"]
+           ['(kernel-atomic-add-u32 p0 p1 p2 p3 p4) 5
+            "runtime KIR kernel memory operation arity rejected"]
+           ['(kernel-xchg-u64 p0 p1 p2) 3
+            "runtime KIR kernel memory operation arity rejected"]
+           ['(kernel-fence-full p0) 1
+            "runtime KIR kernel privileged operation arity rejected"]
+           ['(kernel-rdtsc p0) 1
+            "runtime KIR kernel privileged operation arity rejected"]
+           ['(kernel-swapgs p0) 1
+            "runtime KIR kernel privileged operation arity rejected"]]]
+    (testing (str form)
+      (is (= reason (sysops-rejection #(sysops-verify-expr form arity))) form))))
+
+(deftest an-unknown-kernel-operation-is-still-rejected-by-absence
+  ;; The floor under both tests above: this namespace admits by membership,
+  ;; so a misspelling is refused rather than passed through.
+  (is (= "runtime KIR operation rejected"
+         (sysops-rejection
+          #(sysops-verify-expr '(kernel-cmpxchg-u16 p0 p1 p2 p3 p4) 5)))))
