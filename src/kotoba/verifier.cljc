@@ -1241,6 +1241,14 @@
                       ;; called it -- the f32 dot product's QEMU probe, which
                       ;; reports the guard's own inputs.
                       kernel-xgetbv
+                      ;; xsave: the WRITE half of that same check. CR4 bit 18
+                      ;; is what `xgetbv` faults without, and `xsetbv` is the
+                      ;; only way to set the XCR0 bits it reports. Listed HERE
+                      ;; and not merely upstream because `kernel-xgetbv` was
+                      ;; landed in four repositories and not this one, fell to
+                      ;; the terminal `:else`, and was found by the first
+                      ;; `.kotoba` program that called it.
+                      kernel-read-cr4 kernel-write-cr4 kernel-xsetbv
                       ;; boot: the UEFI firmware boundary. Their arities are
                       ;; re-derived below for the same reason every other
                       ;; entry's is -- independently of the frontend, because
@@ -1311,6 +1319,15 @@
                          ;; it take TWO -- leaf and subleaf -- so this arity is
                          ;; not the family's and is re-derived like every other.
                          'kernel-xgetbv 1
+                         ;; xsave: CR4 takes what CR0 takes; `xsetbv` takes
+                         ;; what `wrmsr` takes. TWO for `xsetbv`, and this row
+                         ;; is the one worth re-deriving: a one-argument
+                         ;; `kernel-xsetbv` would take the VALUE as the XCR
+                         ;; index and write EDX:EAX from whatever the register
+                         ;; happened to hold -- into the register that governs
+                         ;; whether the machine saves its vector state.
+                         'kernel-read-cr4 0 'kernel-write-cr4 1
+                         'kernel-xsetbv 2
                          'kernel-system-table 0 'kernel-load-ptr 2
                          'kernel-uefi-call2 4 'kernel-jump-to 2
                          'kernel-uefi-call4 6 'kernel-uefi-call6 8
@@ -1799,6 +1816,17 @@
                              ;; instructions later. There is no compile-time
                              ;; answer, and the caller BRANCHES on it.
                              kernel-xgetbv
+                             ;; xsave: and the extended-state enable, for the
+                             ;; reason `kotoba.kir/lower` lists it -- and more
+                             ;; urgently, since `(kernel-read-cr4)` is
+                             ;; zero-arity and `(kernel-xsetbv 0 7)` is two
+                             ;; literals, so nothing in either shape suggests
+                             ;; an effect. A disagreement with kir here does
+                             ;; not surface in either side's terms: the
+                             ;; compiler correctly seals no value, this side
+                             ;; re-executes the entry, and the artifact is
+                             ;; refused as an oracle mismatch it never had.
+                             kernel-read-cr4 kernel-write-cr4 kernel-xsetbv
                              ;; sysops: both new families suppress the oracle
                              ;; for the reason `kotoba.kir/lower` lists them.
                              ;; An atomic read-modify-write and an `rdtsc` are
@@ -1890,6 +1918,12 @@
                                                   kernel-cpuid-ecx kernel-cpuid-edx
                                                   ;; simd
                                                   kernel-xgetbv
+                                                  ;; xsave: CR4 and XCR0 are
+                                                  ;; x86 machine state; no
+                                                  ;; other target has them.
+                                                  kernel-read-cr4
+                                                  kernel-write-cr4
+                                                  kernel-xsetbv
                                                   ;; sysops
                                                   kernel-try-lock-u32 kernel-unlock-u32
                                                   kernel-atomic-add-u32 kernel-atomic-add-u64

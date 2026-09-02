@@ -8,7 +8,7 @@
         ;; is the commit that exports that list.
         io.github.kotoba-lang/kotoba-kir
         {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-         :git/sha "6b459e2ca72f3b3851a3121dd583066969aba998"}
+         :git/sha "08bdab8b1084160dcb58ac291a002b140a5abf13"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
          :git/sha "ba29522ece748d2f7ff420d2ba45b1126c94baf8"}
