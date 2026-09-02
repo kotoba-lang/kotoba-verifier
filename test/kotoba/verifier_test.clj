@@ -1531,6 +1531,44 @@
                         'kernel-dot-f32))
         "its shape is not `base length index [value]`, so it is not in that table")))
 
+(deftest the-fused-dequant-dot-family-is-admitted-at-arity-five
+  ;; dequant: same shape as the f32 dot product, same reason for it being
+  ;; here, and asserted PER FORMAT -- this namespace rejects by absence, so a
+  ;; missing row fails with "runtime KIR operation rejected" for a program
+  ;; every other repository admits.
+  (doseq [head '[kernel-dequant-dot-q8-0 kernel-dequant-dot-q4-k
+                 kernel-dequant-dot-q6-k]]
+    (is (nil? (sysops-rejection
+               #(sysops-verify-expr (list head 'p0 'p1 'p2 'p3 'p4) 5)))
+        (str head))
+    (is (nil? (sysops-rejection
+               #(sysops-verify-expr (list head 'p0 34 'p1 128 1) 2)))
+        (str head " with literal lengths and a literal block count"))))
+
+(deftest the-fused-dequant-dot-family-pins-arity-five-independently
+  ;; Four of the five arguments are interchangeable i64 words at this layer,
+  ;; so a short call does not fail on a type -- it silently takes a length as
+  ;; a base and folds whatever is at that address.
+  (doseq [head '[kernel-dequant-dot-q8-0 kernel-dequant-dot-q4-k
+                 kernel-dequant-dot-q6-k]
+          [form arity] [[(list head 'p0 'p1 'p2 'p3) 4]
+                        [(list head 'p0 'p1 'p2) 3]
+                        [(list head 'p0 'p1 'p2 'p3 'p4 'p5) 6]]]
+    (testing (str form)
+      (is (= "runtime KIR kernel memory operation arity rejected"
+             (sysops-rejection #(sysops-verify-expr form arity)))
+          (str form)))))
+
+(deftest the-fused-dequant-dot-family-suppresses-the-compile-time-oracle
+  ;; It reads memory the oracle has not been given, and it does not arrive in
+  ;; `kernel-native-operations` with the windowed table, so it has to be
+  ;; named -- once per format.
+  (doseq [head '[kernel-dequant-dot-q8-0 kernel-dequant-dot-q4-k
+                 kernel-dequant-dot-q6-k]]
+    (is (contains? @#'kotoba.verifier/kernel-native-operations head) (str head))
+    (is (not (contains? @#'kotoba.verifier/kernel-memory-operations head))
+        (str head " has no `base length index [value]` shape"))))
+
 (deftest the-extended-control-register-read-is-admitted-at-arity-one
   ;; simd: `kernel-xgetbv` was landed in kotoba-gmir, kotoba-kir, kotoba-sema
   ;; and kotoba-native and NOT here, so it fell to the terminal `:else` with

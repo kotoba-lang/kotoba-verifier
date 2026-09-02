@@ -8,7 +8,7 @@
         ;; is the commit that exports that list.
         io.github.kotoba-lang/kotoba-kir
         {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-         :git/sha "08bdab8b1084160dcb58ac291a002b140a5abf13"}
+         :git/sha "c64a93daec5fad3b6a04701adabb7938c478c5fe"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
          :git/sha "ba29522ece748d2f7ff420d2ba45b1126c94baf8"}
@@ -41,7 +41,7 @@
         ;; so this reaches the decoder without moving the backend.
         io.github.kotoba-lang/kotoba-gmir
         {:git/url "https://github.com/kotoba-lang/kotoba-gmir.git"
-         :git/sha "fe238166e932c29700f3f447701e1f9893aedce1"}
+         :git/sha "645bd21dea90f939b42cfcd1a0419a541ef9dfa3"}
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
          :git/sha "a2023fed59208b0b4f48795d6e688f5cbd1aad8e"}
