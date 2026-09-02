@@ -1164,7 +1164,16 @@
                       ;; would emit `mfence` and silently discard whatever the
                       ;; caller thought it was ordering.
                       kernel-fence-load kernel-fence-store kernel-fence-full
-                      kernel-rdtsc kernel-rdtscp kernel-swapgs} op)
+                      kernel-rdtsc kernel-rdtscp kernel-swapgs
+                      ;; isr: the interrupt entry address, arity ONE where
+                      ;; every other address operation in this family is
+                      ;; zero-arity. That is what makes the arity row below
+                      ;; worth having here: a zero-argument
+                      ;; `kernel-isr-entry-address` would index the entry
+                      ;; table with whatever the previous expression left in
+                      ;; the register, and the caller writes the answer into
+                      ;; an IDT gate.
+                      kernel-isr-entry-address} op)
         (do
           ;; The port reads take ONE argument -- the port -- where the writes
           ;; take two. Verifying that independently of the frontend is the
@@ -1204,7 +1213,9 @@
                          'kernel-uefi-call2 4 'kernel-jump-to 2
                          'kernel-fence-load 0 'kernel-fence-store 0
                          'kernel-fence-full 0 'kernel-rdtsc 0 'kernel-rdtscp 0
-                         'kernel-swapgs 0} op)
+                         'kernel-swapgs 0
+                         ;; isr: ONE, the vector.
+                         'kernel-isr-entry-address 1} op)
                        (count args))
             (reject! "runtime KIR kernel privileged operation arity rejected"
                      {:operation op}))
@@ -1676,6 +1687,12 @@
                                                   kernel-fence-full
                                                   kernel-rdtsc kernel-rdtscp
                                                   kernel-swapgs
+                                                  ;; isr: an interrupt entry
+                                                  ;; address is a location in
+                                                  ;; an aiueos kernel image;
+                                                  ;; there is no such image
+                                                  ;; behind any other target.
+                                                  kernel-isr-entry-address
                                                   ;; boot: the firmware
                                                   ;; boundary is listed here
                                                   ;; too, so a non-firmware
@@ -1840,7 +1857,14 @@
                              kernel-xchg-u32 kernel-xchg-u64
                              kernel-cmpxchg-u32 kernel-cmpxchg-u64
                              kernel-fence-load kernel-fence-store kernel-fence-full
-                             kernel-rdtsc kernel-rdtscp kernel-swapgs})
+                             kernel-rdtsc kernel-rdtscp kernel-swapgs
+                             ;; isr: and the interrupt entry address, whose
+                             ;; argument is a literal vector at every real
+                             ;; call site -- an IDT is built by naming
+                             ;; vectors. Without this the oracle folds it,
+                             ;; kotoba-kir traps, and a valid program fails
+                             ;; to compile.
+                             kernel-isr-entry-address})
         kernel-native? (some #(and (seq? %) (contains? kernel-operations (first %)))
                              (tree-seq coll? seq (get-in kexe [:program :functions])))
         expected-value
