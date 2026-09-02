@@ -3,7 +3,7 @@
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [kotoba.artifact.core :as artifact]
-            [kotoba.kir]
+            [kotoba.kir :as ir]
             [kotoba.kir.compatibility :as compatibility]
             [kotoba.kir.target :as target]
             [kotoba.native.aggregate-abi :as aggregate-abi]
@@ -419,13 +419,40 @@
                                  (assoc-in [:limits :fuel] 0)))
               #"native fuel budget is not admitted"]
              [:over-maximum
+              ;; fuel64: one past `kotoba.kir/max-fuel`, not one past a
+              ;; literal. The old value here was 1,048,577 -- one past a 2^20
+              ;; ceiling that only the IMAGE route ever consulted, while the
+              ;; object route shipped tiers of 250,000,000 and 2,147,483,647
+              ;; past it. Written against the interpreter's constant so a
+              ;; future move of that constant cannot leave this assertion
+              ;; testing a number nothing enforces.
               (artifact/seal (-> raised
-                                 (assoc-in [:fuel-abi :initial] 1048577)
-                                 (assoc-in [:limits :fuel] 1048577)))
+                                 (assoc-in [:fuel-abi :initial] (inc ir/max-fuel))
+                                 (assoc-in [:limits :fuel] (inc ir/max-fuel))))
               #"native fuel budget is not admitted"]]]
       (testing (name label)
         (is (thrown-with-msg? clojure.lang.ExceptionInfo message
                               (kotoba.verifier/verify-artifact! changed)))))))
+
+;; fuel64: the positive half. Without it the test above says only that SOME
+;; number is refused, which a ceiling of 1 would also satisfy.
+(deftest a-native-budget-past-the-old-imm32-ceiling-is-admitted
+  (let [{:keys [kir]} (vector-fixture)]
+    (doseq [[label fuel] [["2^20, the ceiling this file used to carry" 1048576]
+                          ["one past it" 1048577]
+                          ["2^31, the first budget the old object imm32 could not write"
+                           2147483648]
+                          ["the object probe tier" 4300000000]
+                          ["the ceiling itself" ir/max-fuel]]]
+      (let [a (native-artifact kir fuel)]
+        (is (= a (kotoba.verifier/verify-artifact! a)) label)))))
+
+(deftest the-verifiers-ceiling-is-the-interpreters-ceiling
+  ;; Read rather than copied -- see the comment on `max-native-fuel`. This
+  ;; asserts the number as well, so that reading it from elsewhere cannot
+  ;; quietly become reading something else.
+  (is (= 9007199254740991 ir/max-fuel))
+  (is (= ir/max-fuel @#'kotoba.verifier/max-native-fuel)))
 
 (deftest checked-in-vector-proves-both-surfaces-preserve-one-kir-contract
   (let [{:keys [kir admission expected]} (vector-fixture)
