@@ -10,7 +10,9 @@
         ;; compares (kotoba-kir ADR 0240).
         io.github.kotoba-lang/kotoba-kir
         {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
-         :git/sha "268e28b32787fa56b13842e74cdff33674dc8f86"}
+         ;; fuel64: 233bd6bb exports `max-fuel`, the fuel ceiling this file now
+         ;; READS rather than restates (ADR 0049 -- a ceiling is not a set).
+         :git/sha "233bd6bb6b15912679c529611a42c8af15f2354c"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
          :git/sha "ba29522ece748d2f7ff420d2ba45b1126c94baf8"}
