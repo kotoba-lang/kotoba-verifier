@@ -1396,3 +1396,54 @@
       (doseq [op (quote [kernel-out-u8 kernel-read-msr kernel-cpuid-eax
                          kernel-rdtsc kernel-load-u8])]
         (is (contains? operations op) op)))))
+
+;; ---------------------------------------------------------------------------
+;; memwidth: the verifier rejects by ABSENCE, and this is what that costs.
+;;
+;; The first time a `slice-load-u8` fixture was compiled, every upstream gate
+;; was already open -- the frontend admitted it, `kotoba.kir` executed it, both
+;; backends emitted it -- and `amu compile` still failed with "runtime KIR
+;; operation rejected", from here. That is the design working (a gate on one
+;; route is not a gate), and it is why this namespace asserts the surface it
+;; admits rather than trusting that it followed.
+;; ---------------------------------------------------------------------------
+
+(defn- memwidth-kexe [body]
+  ;; `main` must be zero-arity for the module shape, so the operation under
+  ;; test lives in a helper beside it -- the same split every other fixture in
+  ;; this namespace uses.
+  {:format :kotoba.kir/v3 :entry 'main :exports ['main]
+   :signature {:params [] :result :i64} :effects #{}
+   :functions [{:name 'probe :params ['base 'length 'index 'value]
+                :result :i64 :effects #{} :body body}
+               {:name 'main :params [] :result :i64 :effects #{} :body 0}]})
+
+(defn- memwidth-verifies? [body]
+  (try (#'kotoba.verifier/verify-program! (memwidth-kexe body)) true
+       (catch clojure.lang.ExceptionInfo _ false)))
+
+(deftest memwidth-every-width-and-tier-passes-the-verifier
+  (let [widths ["u8" "u16" "u32" "u64"]
+        tiers ["" "-4k" "-16k" "-64k"]
+        loads (concat (for [w widths t tiers] (str "kernel-load-" w t))
+                      (for [w widths] (str "slice-load-" w)))
+        stores (concat (for [w widths t tiers] (str "kernel-store-" w t))
+                       (for [w widths] (str "slice-store-" w)))]
+    (is (= 20 (count loads)))
+    (is (= 20 (count stores)))
+    (doseq [op loads]
+      (is (memwidth-verifies? (list (symbol op) 'base 'length 'index)) op))
+    (doseq [op stores]
+      (is (memwidth-verifies? (list (symbol op) 'base 'length 'index 'value)) op))
+    (testing "and the arity is still checked, per operation"
+      (doseq [op loads]
+        (is (not (memwidth-verifies? (list (symbol op) 'base 'length 'index 'value)))
+            (str op " must refuse a fourth argument")))
+      (doseq [op stores]
+        (is (not (memwidth-verifies? (list (symbol op) 'base 'length 'index)))
+            (str op " must refuse a missing value"))))
+    (testing "and an operation outside the table is still refused"
+      (is (not (memwidth-verifies? '(kernel-load-u128 base length index)))
+          "there is no 128-bit access")
+      (is (not (memwidth-verifies? '(kernel-load-u8-1m base length index)))
+          "and no 1 MiB tier"))))
