@@ -94,7 +94,14 @@
            ;; INTERCHANGEABLE i64 words at this layer -- two bases, two
            ;; lengths -- so a short call would silently take a length as a
            ;; base. It is the same argument for keeping arities as data.
-           kernel-dot-f32 5}))
+           kernel-dot-f32 5
+           ;; dequant: the fused dequantize-and-dot family. Five arguments
+           ;; each, and the same argument for keeping the arity as data --
+           ;; four of the five are interchangeable i64 words here, so a short
+           ;; call would silently take a length as a base.
+           kernel-dequant-dot-q8-0 5
+           kernel-dequant-dot-q4-k 5
+           kernel-dequant-dot-q6-k 5}))
 
 (defn- reject! [message data]
   (throw (ex-info message (assoc data :phase :verify))))
@@ -1911,7 +1918,13 @@
                              ;; than `base length index [value]` -- so it does
                              ;; not arrive here with that table and has to be
                              ;; named.
-                             kernel-dot-f32}))
+                             kernel-dot-f32
+                             ;; dequant: and every fused format, for the same
+                             ;; reason -- two regions and a count, so none of
+                             ;; them arrives with that table either.
+                             kernel-dequant-dot-q8-0
+                             kernel-dequant-dot-q4-k
+                             kernel-dequant-dot-q6-k}))
 
 (defn- verify-runtime! [{:keys [target program code exports lowering limits fuel-abi context-abi]
                          profile-value :target-profile}]
