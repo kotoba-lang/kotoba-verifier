@@ -505,7 +505,7 @@
   (is (= :format (shape-condition (assoc ok-program :format :kotoba.kir/v9))))
   (is (= :keys (shape-condition (assoc ok-program :extra 1))))
   (is (= :signature-result
-         (shape-condition (assoc ok-program :signature {:params [] :result :string})))
+         (shape-condition (assoc ok-program :signature {:params [] :result :f64})))
       "an unsupported entry result must be reported as such, not as a shapeless failure")
   (is (= :function-count (shape-condition (assoc ok-program :functions []))))
   (is (= :exports-vector (shape-condition (assoc ok-program :exports #{'main}))))
@@ -660,9 +660,14 @@
   ;; would have changed nothing. lower now folds and seals the boxed boolean.
   (is (nil? (shape-condition (assoc ok-program :signature {:params [] :result :bool}))))
   (is (nil? (shape-condition ok-program)))
+  ;; :string joined the admitted set (kbb slice 3, ADR-2607181900): a string
+  ;; is one machine word (the pair(offset,length) handle) and kexe_loader.c
+  ;; has read KEXE_RESULT_TYPE=string. :f64 remains outside.
   (testing "a result type outside the pair is still rejected, and says so"
     (is (= :signature-result
-           (shape-condition (assoc ok-program :signature {:params [] :result :string}))))))
+           (shape-condition (assoc ok-program :signature {:params [] :result :f64}))))
+    (is (nil? (shape-condition (assoc ok-program :signature {:params [] :result :string})))
+        ":string is admitted at the entry boundary, same one-word shape as internal results")))
 
 (defn- function-rejected?
   "True when PROGRAM fails specifically the FUNCTION shape check. Named rather
