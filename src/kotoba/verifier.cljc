@@ -1564,7 +1564,7 @@
 ;;
 ;; Note that this set is only reachable at all because `lower` now seals
 ;; something: widening it on its own would have changed nothing.
-(def ^:private entry-result-types #{:i64 :bool})
+(def ^:private entry-result-types #{:i64 :bool :string})
 
 (defn- entry-result-type? [type]
   (or (contains? entry-result-types type)
