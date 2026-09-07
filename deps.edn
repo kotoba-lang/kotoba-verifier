@@ -8,8 +8,8 @@
         ;; is the commit that exports that list. Advanced 2026-09-02 to reach
         ;; `native-erased-source-carrier-types`, the second list the same test
         ;; compares (kotoba-kir ADR 0240).
-        io.github.kotoba-lang/kotoba-kir
-        {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
+        io.github.kotoba-lang/osaho
+        {:git/url "https://github.com/kotoba-lang/osaho.git"
          ;; fuel64: 233bd6bb exports `max-fuel`, the fuel ceiling this file now
          ;; READS rather than restates (ADR 0049 -- a ceiling is not a set).
          ;; fwstore: and it contains d8b0e679, which admits
