@@ -1385,16 +1385,31 @@
       (is (= "runtime KIR kernel privileged operation arity rejected"
              (sysops-rejection #(sysops-verify-expr form arity)))
           form)))
-  ;; Pinned beside it: the three canned handler-address operations stay
+  ;; Pinned beside it: the four canned handler-address operations stay
   ;; zero-arity here too, so widening one cannot be read as widening the
   ;; family.
   (doseq [form ['(kernel-page-fault-handler-address p0)
                 '(kernel-page-fault-recovery-handler-address p0)
-                '(kernel-double-fault-handler-address p0)]]
+                '(kernel-double-fault-handler-address p0)
+                '(kernel-undefined-opcode-handler-address p0)]]
     (testing (str form)
       (is (= "runtime KIR kernel privileged operation arity rejected"
              (sysops-rejection #(sysops-verify-expr form 1)))
           form))))
+
+(deftest the-undefined-opcode-handler-address-is-admitted-at-arity-zero
+  ;; amu-h7: the canned #UD handler's address, beside
+  ;; `kernel-double-fault-handler-address` in every set that carries it.
+  ;; Admitted by membership at arity zero; before this row the whole family's
+  ;; absence refusal below was the answer, which is what the guest saw as
+  ;; `runtime KIR operation rejected` at the verify phase.
+  (is (nil? (sysops-rejection
+             #(sysops-verify-expr '(kernel-undefined-opcode-handler-address) 0)))
+      "zero-arity, an address: admitted")
+  (is (= "runtime KIR kernel privileged operation arity rejected"
+         (sysops-rejection
+          #(sysops-verify-expr '(kernel-undefined-opcode-handler-address p0) 1)))
+      "one operand is the isr-entry shape, not this one's"))
 
 (deftest an-unknown-kernel-operation-is-still-rejected-by-absence
   ;; The floor under both tests above: this namespace admits by membership,
