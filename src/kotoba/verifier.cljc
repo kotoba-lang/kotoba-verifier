@@ -144,6 +144,59 @@
   #?(:clj (integer? form)
      :cljs (or (i64/bigint-value? form) (integer? form))))
 
+(defn- guest-normalize
+  "Coerce every guest integer in VALUE to the host's one representation.
+
+  On the JVM this is identity. On cljs it is not: an artifact read back by
+  the compiler host carries JavaScript bigints, everything this verifier
+  re-derives carries plain numbers, and `(= 42 (js/BigInt 42))` is false --
+  so every structural comparison between the two sides failed. Measured
+  2026-09-08 on a real aarch64 artifact, in this order: `malformed code
+  bytes`, then `native artifact oracle value rejected`, then `native
+  instruction stream rejected`, then `native export table rejected`. Four
+  refusals, one cause, and none of them had ever been seen because
+  `amu verify` was a `.clj`-only command.
+
+  JavaScript has a single number type, so this widens nothing: 42 and 42.0
+  are already the same value there. A string stays a string and nil stays
+  nil."
+  [value]
+  #?(:clj value
+     :cljs (cond
+             (guest-integer? value) (i64/->bigint value)
+             (map? value) (into (empty value) (map (fn [[k v]] [k (guest-normalize v)])) value)
+             (vector? value) (mapv guest-normalize value)
+             (set? value) (into #{} (map guest-normalize) value)
+             (seq? value) (map guest-normalize value)
+             :else value)))
+
+(defn- guest=
+  "Structural equality between a re-derived value and a sealed one, across the
+  two hosts' number representations. See `guest-normalize`."
+  [a b]
+  #?(:clj (= a b)
+     :cljs (= (guest-normalize a) (guest-normalize b))))
+
+(defn- guest-value=
+  "Equality for a sealed guest value against a re-derived one.
+
+  The two sides can reach this with different number representations on the
+  cljs host: a value read back out of an artifact may be a plain number while
+  the oracle re-derivation produces a bigint, and `(= 42 (js/BigInt 42))` is
+  false. Measured 2026-09-08 on a real aarch64 artifact -- sealed 42 as a
+  Number, oracle 42 as a BigInt, refused as `native artifact oracle value
+  rejected`, which read as a verification failure and was a representation
+  mismatch.
+
+  Only two guest integers are normalized, through the same `->bigint` the
+  rest of this file uses; anything else compares as before, so nil still
+  compares to nil and a string still has to be the same string."
+  [a b]
+  #?(:clj (= a b)
+     :cljs (if (and (guest-integer? a) (guest-integer? b))
+             (= (i64/->bigint a) (i64/->bigint b))
+             (= a b))))
+
 (def target-contracts
   {:x86_64-kotoba-v1 {:lowering :runtime-sysv-v1 :emit x86-64/emit-program}
    :aarch64-kotoba-v1 {:lowering :runtime-aapcs64-v1 :emit aarch64/emit-program}})
@@ -1756,7 +1809,7 @@
                           (vec (repeat (count (:params function)) :i64)))]
       (and (vector? indexes)
            (= indexes (vec (sort (distinct indexes))))
-           (every? #(and (integer? %) (<= 0 %)
+           (every? #(and (guest-integer? %) (<= 0 %)
                          (< % (count (:params function)))
                          (= :i64 (nth param-types % nil)))
                    indexes)))))
@@ -1771,7 +1824,7 @@
       (and (vector? indexes)
            (= indexes (vec (sort (distinct indexes))))
            (not-any? closure-indexes indexes)
-           (every? #(and (integer? %) (<= 0 %)
+           (every? #(and (guest-integer? %) (<= 0 %)
                          (< % (count (:params function)))
                          (= :i64 (nth param-types % nil)))
                    indexes)))))
@@ -2157,9 +2210,9 @@
                         (catch #?(:clj Exception :cljs :default) e
                           (reject! "runtime KIR cannot be safely lowered"
                                    {:target target :cause (ex-message e)})))]
-      (when-not (= (:exports expected) exports)
+      (when-not (guest= (:exports expected) exports)
         (reject! "native export table rejected" {:target target}))
-      (when-not (= (:code expected) code)
+      (when-not (guest= (:code expected) code)
         (reject! "native instruction stream rejected" {:target target})))
     (let [fuel (:fuel limits)
           _ (when-not (admitted-native-fuel? fuel)
@@ -2203,11 +2256,11 @@
                             ;; growing vector runs out of elements first.
                             :vector-capacity 4096
                             :vector-item-capacity 65536}]
-      (when-not (= expected-fuel-abi fuel-abi)
+      (when-not (guest= expected-fuel-abi fuel-abi)
         (reject! "fuel ABI is not admitted" {:target target :fuel-abi fuel-abi}))
-      (when-not (= expected-limits limits)
+      (when-not (guest= expected-limits limits)
         (reject! "resource limits are not admitted" {:target target :limits limits}))
-      (when-not (= expected-context context-abi)
+      (when-not (guest= expected-context context-abi)
         (reject! "execution context ABI is not admitted"
                  {:target target :context-abi context-abi})))))
 
@@ -2217,15 +2270,22 @@
   (when-not (= :kotoba.kexe/v1 format) (reject! "unknown artifact format" {}))
   (when-not (and (string? kir-sha256) (re-matches #"[0-9a-f]{64}" kir-sha256))
     (reject! "missing or malformed KIR identity" {}))
-  (when-not (= effects (get-in kexe [:program :effects]))
+  (when-not (guest= effects (get-in kexe [:program :effects]))
     (reject! "artifact effects do not match runtime KIR" {}))
   (when-not (every? #(and (vector? %) (= :cap/call (first %))
                           (= 2 (count %))
                           (guest-integer? (second %))
                           (<= 0 (second %) 255)) effects)
     (reject! "native artifact contains an unsupported effect" {:effects effects}))
+  ;; `guest-integer?`, not `integer?`: a byte read back out of an artifact is
+  ;; a JavaScript bigint on the cljs host, for which `integer?` is false. This
+  ;; gate is the same spelling mistake this file already records at
+  ;; `guest-integer?` for shift literals, and it was invisible for the same
+  ;; reason -- nothing JVM-free ever reached it, because `amu verify` was a
+  ;; `.clj`-only command until 2026-09-08. Measured on the nbb host before
+  ;; this change: EVERY native artifact was refused as "malformed code bytes".
   (when-not (and (vector? code) (<= 1 (count code) (* 1024 1024))
-                 (every? #(and (integer? %) (<= 0 % 255)) code))
+                 (every? #(and (guest-integer? %) (<= 0 % 255)) code))
     (reject! "malformed code bytes" {}))
   (when-not (artifact/valid-seal? kexe) (reject! "artifact integrity mismatch" {}))
   (when-not (= kir-sha256 (artifact/sha256 (:program kexe)))
@@ -2269,6 +2329,6 @@
             (catch #?(:clj Exception :cljs :default) error
               (reject! "native artifact oracle evaluation rejected"
                        {:cause (ex-message error)}))))]
-    (when-not (= expected-value (:value kexe))
+    (when-not (guest-value= expected-value (:value kexe))
       (reject! "native artifact oracle value rejected" {})))
   kexe)
