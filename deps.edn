@@ -14,7 +14,16 @@
          ;; READS rather than restates (ADR 0049 -- a ceiling is not a set).
          ;; fwstore: and it contains d8b0e679, which admits
          ;; `kernel-uefi-alloc-region` at the oracle (kotoba-kir ADR-0269).
-         :git/sha "233bd6bb6b15912679c529611a42c8af15f2354c"}
+         ;;
+         ;; Advanced 2026-09-08, 233bd6bb -> 73243145 (osaho main, ahead 24,
+         ;; forward only). This verifier re-derives the target profile and
+         ;; compares it to the artifact's, so its `kotoba.kir.target` has to
+         ;; be the one the compiler built with -- otherwise every current
+         ;; artifact is refused as "native target profile does not match
+         ;; target identity", which reads as a bad artifact and is a pin skew.
+         ;; That is exactly what the fixture in this commit was refused with
+         ;; before the advance.
+         :git/sha "7324314564abf1ae05a08dbd0066c9e6c3b34921"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
          :git/sha "ba29522ece748d2f7ff420d2ba45b1126c94baf8"}
@@ -59,6 +68,29 @@
         ;; with the exact producer.
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
+         ;;
+         ;; NOT advanced 2026-09-08, and the reason is measured. This
+         ;; verifier re-emits an artifact with the exact producer and compares
+         ;; the export table, so a backend older than amu's refuses current
+         ;; artifacts: `aarch64-closure-params.kexe`, built by an amu pinning
+         ;; kotoba-native 70b94c6d, is refused here as "native export table
+         ;; rejected", while `aarch64-demo.kexe` passes because a program with
+         ;; no closures gives the two backends nothing to disagree about.
+         ;;
+         ;; Advancing to 70b94c6d fixes that and breaks
+         ;; `pinned-producer-parks-only-the-fifth-entry-argument` on aarch64:
+         ;; the instruction before the tail-call transfer becomes the PARK
+         ;; ({:dst x19 :src x4}) rather than the restore, so the test's
+         ;; "restored into the fifth argument register last" no longer holds
+         ;; positionally. That is a question about the allocator, and the
+         ;; comment above this pin records that the last such batch was three
+         ;; tests pinning representation instead of the property they meant.
+         ;; It deserves the same treatment and its own commit -- weakening it
+         ;; here, inside a change about integer representation, would be
+         ;; moving a check to make a test green.
+         ;;
+         ;; Both pins are also behind kotoba-native main (155e82ce): this one
+         ;; by 34, amu's by 2.
          :git/sha "adeb1b0fa5bcd2dd18a657c7e3bd3c4acbd630ae"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"

@@ -170,6 +170,33 @@
              (seq? value) (map guest-normalize value)
              :else value)))
 
+(defn- guest-index
+  "A guest integer that this verifier is about to use as a HOST index or key.
+
+  `guest-integer?` establishes that a value IS a guest literal. It does not
+  make that value usable by `nth`, `distinct` or `set`, and on cljs those
+  three do different wrong things with a JavaScript bigint: `nth` throws
+  \"Index argument to nth must be a number\", while `distinct` and `set`
+  throw when they try to hash one (\"Cannot create property
+  'closure_uid_...' on bigint\"). Measured 2026-09-08 on
+  `examples/held-operations.kotoba` compiled to aarch64-macos: the
+  artifact's `:closure-param-indexes` reached `nth` and the verifier died
+  with a JavaScript TypeError instead of returning an admission decision.
+  That is the worse of the two failures -- the CLI reports it as
+  `:kotoba/internal-error`, which sends the reader to look at the compiler
+  rather than at the artifact.
+
+  `guest-normalize` cannot serve here: it coerces the OTHER way, TO bigint,
+  because its job is comparison against sealed values, and feeding its output
+  to `set` would throw for the same reason. An index into a parameter list is
+  bounded by the parameter count, so narrowing it to a host number is exact.
+
+  Apply it only after `guest-integer?` has admitted the value; a non-integer
+  passes through unchanged so the caller's own type check still decides."
+  [value]
+  #?(:clj value
+     :cljs (if (i64/bigint-value? value) (js/Number value) value)))
+
 (defn- guest=
   "Structural equality between a re-derived value and a sealed one, across the
   two hosts' number representations. See `guest-normalize`."
@@ -1804,30 +1831,43 @@
 (defn- valid-closure-param-indexes? [function]
   (if-not (contains? function :closure-param-indexes)
     true
-    (let [indexes (:closure-param-indexes function)
+    (let [raw (:closure-param-indexes function)
           param-types (or (:param-types function)
                           (vec (repeat (count (:params function)) :i64)))]
-      (and (vector? indexes)
-           (= indexes (vec (sort (distinct indexes))))
-           (every? #(and (guest-integer? %) (<= 0 %)
-                         (< % (count (:params function)))
-                         (= :i64 (nth param-types % nil)))
-                   indexes)))))
+      ;; The type check comes first and runs on what actually arrived, so a
+      ;; non-integer is still refused here rather than narrowed away. Only
+      ;; then is the vector put into the host's representation -- `sort`,
+      ;; `distinct` and `nth` below are host operations and cannot take a
+      ;; bigint. See `guest-index`.
+      (and (vector? raw)
+           (every? guest-integer? raw)
+           (let [indexes (mapv guest-index raw)]
+             (and (= indexes (vec (sort (distinct indexes))))
+                  (every? #(and (<= 0 %)
+                                (< % (count (:params function)))
+                                (= :i64 (nth param-types % nil)))
+                          indexes)))))))
 
 (defn- valid-i64-pair-chain-param-indexes? [function]
   (if-not (contains? function :i64-pair-chain-param-indexes)
     true
-    (let [indexes (:i64-pair-chain-param-indexes function)
-          closure-indexes (set (:closure-param-indexes function))
+    (let [raw (:i64-pair-chain-param-indexes function)
+          ;; `set` hashes, so this one is narrowed for the same reason the
+          ;; indexes are -- a set of bigints throws on construction, not on
+          ;; lookup, which would have made the disjointness rule below
+          ;; unreachable rather than wrong.
+          closure-indexes (set (map guest-index (:closure-param-indexes function)))
           param-types (or (:param-types function)
                           (vec (repeat (count (:params function)) :i64)))]
-      (and (vector? indexes)
-           (= indexes (vec (sort (distinct indexes))))
-           (not-any? closure-indexes indexes)
-           (every? #(and (guest-integer? %) (<= 0 %)
-                         (< % (count (:params function)))
-                         (= :i64 (nth param-types % nil)))
-                   indexes)))))
+      (and (vector? raw)
+           (every? guest-integer? raw)
+           (let [indexes (mapv guest-index raw)]
+             (and (= indexes (vec (sort (distinct indexes))))
+                  (not-any? closure-indexes indexes)
+                  (every? #(and (<= 0 %)
+                                (< % (count (:params function)))
+                                (= :i64 (nth param-types % nil)))
+                          indexes)))))))
 
 (defn- valid-closure-result-refinement? [function]
   (if-not (contains? function :closure-result?)
