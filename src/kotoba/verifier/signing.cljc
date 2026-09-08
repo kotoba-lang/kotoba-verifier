@@ -1,16 +1,36 @@
 (ns kotoba.verifier.signing
+  "Ed25519 signing for sealed artifacts, on both hosts this repository runs on.
+
+  This was `.clj` until 2026-09-08, and it is why `amu keygen`, `sign`,
+  `verify` and `run` all answered `REFUSED: clojure was invoked` on a PATH
+  with no java: a native artifact could be BUILT without a JVM and could not
+  be signed, verified or run without one, so the only JVM-free way to execute
+  one bypassed the signature and the trust set entirely.
+
+  Nothing about the format changes. The key envelopes are the same DER --
+  X.509 SubjectPublicKeyInfo and PKCS#8 -- base64'd the same way, and Ed25519
+  is deterministic, so the same key over the same value produces the same
+  signature byte for byte on either host. `verifier-signing-parity-test`
+  pins that with a fixed vector rather than trusting the sentence."
   (:require [clojure.set :as set]
             [kotoba.artifact.core :as artifact]
             [kotoba.verifier :as verifier])
-  (:import [java.security KeyFactory KeyPairGenerator Signature]
-           [java.security.spec PKCS8EncodedKeySpec X509EncodedKeySpec]
-           [java.nio.charset StandardCharsets]
-           [java.util Base64]))
+  #?(:clj (:import [java.security KeyFactory KeyPairGenerator Signature]
+                   [java.security.spec PKCS8EncodedKeySpec X509EncodedKeySpec]
+                   [java.nio.charset StandardCharsets]
+                   [java.util Base64])
+     :cljs (:require ["node:crypto" :as crypto])))
 
-(def encoder (Base64/getEncoder))
-(def decoder (Base64/getDecoder))
-(defn- b64 [bytes] (.encodeToString encoder bytes))
-(defn- unb64 [s] (.decode decoder ^String s))
+#?(:clj (def ^:private encoder (Base64/getEncoder)))
+#?(:clj (def ^:private decoder (Base64/getDecoder)))
+
+(defn- b64 [bytes]
+  #?(:clj (.encodeToString encoder bytes)
+     :cljs (.toString (js/Buffer.from bytes) "base64")))
+
+(defn- unb64 [s]
+  #?(:clj (.decode decoder ^String s)
+     :cljs (js/Buffer.from s "base64")))
 (defn- sha256? [value]
   (and (string? value) (boolean (re-matches #"[0-9a-f]{64}" value))))
 
@@ -42,25 +62,39 @@
   (artifact/sha256 {:algorithm :ed25519 :public-key public-key}))
 
 (defn- decode-public [encoded]
-  (.generatePublic (KeyFactory/getInstance "Ed25519")
-                   (X509EncodedKeySpec. (unb64 encoded))))
+  #?(:clj (.generatePublic (KeyFactory/getInstance "Ed25519")
+                           (X509EncodedKeySpec. (unb64 encoded)))
+     :cljs (crypto/createPublicKey #js {:key (unb64 encoded) :format "der" :type "spki"})))
 
 (defn- decode-private [encoded]
-  (.generatePrivate (KeyFactory/getInstance "Ed25519")
-                    (PKCS8EncodedKeySpec. (unb64 encoded))))
+  #?(:clj (.generatePrivate (KeyFactory/getInstance "Ed25519")
+                            (PKCS8EncodedKeySpec. (unb64 encoded)))
+     :cljs (crypto/createPrivateKey #js {:key (unb64 encoded) :format "der" :type "pkcs8"})))
+
+;; Ed25519 takes no digest argument: node:crypto spells that `null` as the
+;; algorithm, and the JVM spells it by there being no digest to name.
+(defn- raw-sign [private-key ^bytes message]
+  #?(:clj (let [s (doto (Signature/getInstance "Ed25519")
+                    (.initSign private-key) (.update message))]
+            (.sign s))
+     :cljs (crypto/sign nil message private-key)))
+
+(defn- raw-verify [public-key ^bytes message ^bytes signature]
+  #?(:clj (let [v (doto (Signature/getInstance "Ed25519")
+                    (.initVerify public-key) (.update message))]
+            (.verify v signature))
+     :cljs (crypto/verify nil message public-key signature)))
+
+(defn- utf8-bytes [^String s]
+  #?(:clj (.getBytes s StandardCharsets/UTF_8)
+     :cljs (js/Buffer.from s "utf8")))
 
 (defn- keypair-matches? [public-key private-key]
   (try
-    (let [challenge (.getBytes "kotoba:key-consistency:v1" StandardCharsets/UTF_8)
-          signature (doto (Signature/getInstance "Ed25519")
-                      (.initSign (decode-private private-key))
-                      (.update challenge))
-          proof (.sign signature)
-          verifier (doto (Signature/getInstance "Ed25519")
-                     (.initVerify (decode-public public-key))
-                     (.update challenge))]
-      (.verify verifier proof))
-    (catch Exception _ false)))
+    (let [challenge (utf8-bytes "kotoba:key-consistency:v1")
+          proof (raw-sign (decode-private private-key) challenge)]
+      (raw-verify (decode-public public-key) challenge proof))
+    (catch #?(:clj Exception :cljs :default) _ false)))
 
 (defn valid-key? [key]
   (and (map? key)
@@ -79,7 +113,8 @@
        (= :ed25519 (:algorithm key))
        (string? (:public-key key))
        (= (:signer key) (signer-id (:public-key key)))
-       (try (decode-public (:public-key key)) true (catch Exception _ false))))
+       (try (decode-public (:public-key key)) true
+            (catch #?(:clj Exception :cljs :default) _ false))))
 
 (defn verification-key [signing-key]
   (when-not (valid-key? signing-key)
@@ -96,23 +131,25 @@
 (defn sign-value [key value]
   (when-not (valid-key? key)
     (throw (ex-info "malformed Ed25519 signing key" {:phase :sign})))
-  (let [private-key (decode-private (:private-key key))
-        signer (doto (Signature/getInstance "Ed25519") (.initSign private-key)
-                 (.update (artifact/canonical-bytes value)))]
-    (b64 (.sign signer))))
+  (b64 (raw-sign (decode-private (:private-key key))
+                 (artifact/canonical-bytes value))))
 
 (defn verify-value [public-key value signature]
   (try
-    (let [public (decode-public public-key)
-          checker (doto (Signature/getInstance "Ed25519") (.initVerify public)
-                    (.update (artifact/canonical-bytes value)))]
-      (.verify checker (unb64 signature)))
-    (catch Exception _ false)))
+    (raw-verify (decode-public public-key)
+                (artifact/canonical-bytes value)
+                (unb64 signature))
+    (catch #?(:clj Exception :cljs :default) _ false)))
 
 (defn generate-keypair []
-  (let [pair (.generateKeyPair (KeyPairGenerator/getInstance "Ed25519"))
-        public (b64 (.getEncoded (.getPublic pair)))
-        private (b64 (.getEncoded (.getPrivate pair)))]
+  (let [#?@(:clj [pair (.generateKeyPair (KeyPairGenerator/getInstance "Ed25519"))
+                  public (b64 (.getEncoded (.getPublic pair)))
+                  private (b64 (.getEncoded (.getPrivate pair)))]
+            :cljs [pair (crypto/generateKeyPairSync "ed25519")
+                   public (b64 (.export (.-publicKey pair)
+                                        #js {:format "der" :type "spki"}))
+                   private (b64 (.export (.-privateKey pair)
+                                         #js {:format "der" :type "pkcs8"}))])]
     {:format :kotoba.signing-key/v1 :algorithm :ed25519
      :signer (signer-id public) :public-key public :private-key private}))
 

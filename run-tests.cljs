@@ -13,7 +13,10 @@
    Namespaces listed here must be `.cljc`. Adding a `.clj`-only test to this
    list is how the list quietly stops meaning what it says."
   (:require [cljs.test :as t]
-            [kotoba.verifier-shift-literal-test]))
+            [kotoba.verifier-shift-literal-test]
+            ;; signing moved from .clj to .cljc on 2026-09-08; this is the
+            ;; half that checks the JVM's bytes from the Node side.
+            [kotoba.verifier-signing-parity-test]))
 
 (defmethod t/report [:cljs.test/default :end-run-tests] [m]
   (println (str "\nnbb: " (:test m) " tests, " (:pass m) " passed, "
