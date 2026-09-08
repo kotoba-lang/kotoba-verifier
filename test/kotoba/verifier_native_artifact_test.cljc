@@ -90,17 +90,10 @@
 ;; would have meant weakening a profile check to make a test green.
 
 #?(:cljs
-   (deftest what-still-stops-a-native-artifact-on-this-host
-     ;; Recorded as a test rather than a comment so it goes red the day it is
-     ;; fixed, instead of quietly staying true.
-     ;;
-     ;; The chain is not finished and it leaves this repository: `kotoba.kir`
-     ;; refuses the oracle re-derivation because the artifact's fuel is a
-     ;; bigint here -- "fuel must be a positive integer within the admitted
-     ;; ceiling", :fuel 512n, :maximum 9007199254740991. Five refusals were
-     ;; measured on 2026-09-08, one cause, and none had ever been seen because
-     ;; `amu verify` was a `.clj`-only command until that day.
-     (let [refusal (try (verifier/verify-artifact! (fixture)) nil
-                        (catch :default e (ex-message e)))]
-       (is (= "native artifact oracle evaluation rejected" refusal)
-           (str "the remaining blocker moved; got: " refusal)))))
+   (deftest a-real-native-artifact-verifies-on-this-host
+     ;; The chain finished on 2026-09-08. Six refusals, one cause each, none
+     ;; ever seen because `amu verify` was a `.clj`-only command: the byte
+     ;; gate's `integer?`, three structural comparisons between a re-derived
+     ;; value and a sealed one, the fuel gate, and the fuel counter's
+     ;; bigint/number mix. This is the whole artifact, verified.
+     (is (map? (verifier/verify-artifact! (fixture))))))

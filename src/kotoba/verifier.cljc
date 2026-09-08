@@ -2325,7 +2325,21 @@
                    (some? (get-in kexe [:program :entry])))
           (try
             (ir/execute (:program kexe) (get-in kexe [:program :entry]) []
-                        {:fuel (get-in kexe [:limits :fuel])})
+                        ;; A plain number, which is what `ir/execute` documents
+                        ;; its fuel to be: "interpreter-internal config, never
+                        ;; a `.kotoba` value". This call was quietly violating
+                        ;; that -- the artifact's limit is a bigint on the cljs
+                        ;; host, so every native artifact was refused with
+                        ;; "fuel must be a positive integer within the admitted
+                        ;; ceiling" (measured 2026-09-08, the fifth of six
+                        ;; refusals that stopped a native artifact verifying
+                        ;; JVM-free). Converting here rather than widening that
+                        ;; gate: a bigint reaching the fuel counter mixes with
+                        ;; the interpreter's plain-number arithmetic and
+                        ;; JavaScript throws on the mix. `max-fuel` is 2^53-1,
+                        ;; so the conversion is exact.
+                        {:fuel #?(:clj (get-in kexe [:limits :fuel])
+                                  :cljs (js/Number (get-in kexe [:limits :fuel])))})
             (catch #?(:clj Exception :cljs :default) error
               (reject! "native artifact oracle evaluation rejected"
                        {:cause (ex-message error)}))))]
