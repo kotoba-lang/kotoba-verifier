@@ -2140,6 +2140,151 @@
                              kernel-dequant-dot-iq3-xxs
                              kernel-dequant-dot-iq3-s}))
 
+
+;; ── granted regions: the one memory family a NON-aiueos native target gets ──
+;;
+;; Every operation in `kernel-memory-operations` used to be aiueos-only, and
+;; the reason was sound: `base` is an address, the emitted bounds check
+;; constrains the offset WITHIN a window and says nothing about whether the
+;; window is legitimate, and a general target has no ring-0 story that would
+;; make naming an address reasonable.
+;;
+;; What that reasoning does NOT cover is a base the program could not have
+;; chosen. `kotoba.compiler.frontend`'s region-provenance pass already requires
+;; every base to flow UNMODIFIED from a compile-time literal, from
+;; `kernel-boot-info`, or from a parameter -- never from arithmetic, a load or
+;; a call result -- and it already names the case that matters here: a tainted
+;; parameter on a function no internal call supplies is "the ABI boundary where
+;; the C kernel supplies the region". On a general native target the supplier
+;; is the host that invoked the export, and the question is the same question.
+;;
+;; So this admits the SLICE subfamily, and only it, and only when this file has
+;; re-derived for itself that the program contains no base it could have
+;; chosen. Two things are deliberately NOT admitted:
+;;
+;;   - LITERAL bases. Legitimate on aiueos, where naming MMIO is the job.
+;;     `(slice-load-u8 4096 100 0)` on a hosted target is arbitrary memory, and
+;;     the provenance rule admits literals, so this file refuses them itself.
+;;   - The byte-WINDOW family (`kernel-load-u8` and its fifteen siblings) and
+;;     everything privileged. That is a surface-size decision and it is stated
+;;     as one, not dressed as a property: a parameter-based window would be
+;;     exactly as safe. The slice family is what the source syntax carries a
+;;     region as, so it is what a host can grant; the raw window stays where
+;;     its provenance story is a kernel's.
+;;
+;; INDEPENDENCE IS THE POINT. `kotoba.compiler.frontend` computes this too, and
+;; this file must not read its answer -- being stricter here is sound, trusting
+;; it is not. What is re-derived below is a fixpoint over the sealed KIR the
+;; artifact carries, not a report anyone handed over.
+
+(def ^:private granted-region-operations
+  "The slice subfamily plus the checked narrowing. `kernel-subregion` belongs
+  with them because a narrowing that cannot be rooted is a base by another
+  name -- and because it traps at run time unless the sub-window lies inside
+  its parent, which is what makes a derived region no wider than a granted
+  one."
+  '#{slice-load-u8 slice-load-u16 slice-load-u32 slice-load-u64
+     slice-store-u8 slice-store-u16 slice-store-u32 slice-store-u64
+     kernel-subregion})
+
+(defn- region-base-position
+  "Which argument of OP is the base, or nil when OP takes none. Every entry in
+  `granted-region-operations` puts it first; the position is named rather than
+  assumed so a family that does not would have to say so."
+  [op]
+  (when (contains? granted-region-operations op) 0))
+
+(defn- region-calls
+  "Every `[op args]` in BODY whose head takes a base."
+  [body]
+  (keep (fn [form]
+          (when (and (seq? form) (region-base-position (first form)))
+            [(first form) (vec (rest form))]))
+        (tree-seq coll? seq body)))
+
+(defn- traceable-region-base?
+  "A base is traceable when it is a PARAMETER of the enclosing function, and
+  nothing else. Narrower than the frontend's rule, which also admits a literal
+  and `kernel-boot-info` -- both are addresses the program chose, and on a
+  hosted target that is the whole hazard."
+  [expr params]
+  (and (symbol? expr) (contains? params expr)))
+
+(defn- region-tainted-positions
+  "Fixpoint: `{function-name #{param-index ...}}` for every parameter position
+  that reaches a base. A position is tainted when it is used as a base
+  directly, or passed into an already-tainted position of a callee -- the same
+  interprocedural shape a recursive traversal needs, since a slice threaded
+  through a helper is the ordinary case rather than the exotic one."
+  [functions]
+  (let [by-name (into {} (map (juxt :name identity)) functions)
+        index-of (fn [name sym]
+                   (let [ps (vec (:params (get by-name name)))]
+                     (first (keep-indexed #(when (= sym %2) %1) ps))))
+        direct (into {}
+                     (map (fn [{:keys [name params body]}]
+                            (let [ps (set params)]
+                              [name (into #{}
+                                          (keep (fn [[_ args]]
+                                                  (let [b (first args)]
+                                                    (when (and (symbol? b) (contains? ps b))
+                                                      (index-of name b)))))
+                                          (region-calls body))])))
+                     functions)]
+    (loop [tainted direct]
+      (let [next-tainted
+            (reduce
+             (fn [acc {:keys [name params body]}]
+               (let [ps (set params)]
+                 (reduce
+                  (fn [acc form]
+                    (if (and (seq? form) (contains? by-name (first form)))
+                      (let [callee (first form)
+                            args (vec (rest form))]
+                        (reduce (fn [acc i]
+                                  (let [arg (nth args i nil)]
+                                    (if (and (symbol? arg) (contains? ps arg))
+                                      (update acc name (fnil conj #{})
+                                              (index-of name arg))
+                                      acc)))
+                                acc
+                                (get tainted callee #{})))
+                      acc))
+                  acc
+                  (tree-seq coll? seq body))))
+             tainted
+             functions)]
+        (if (= next-tainted tainted) tainted (recur next-tainted))))))
+
+(defn- granted-region-provenance
+  "nil when every base in FUNCTIONS is traceable, else the offending form.
+
+  Two conditions, checked separately so the refusal can say which one broke:
+  every base is a parameter of its own function, and every argument flowing
+  into a tainted parameter position of an internal callee is a parameter too.
+  The second is what stops a caller from being the hole its callee's own check
+  closed."
+  [functions]
+  (let [by-name (into {} (map (juxt :name identity)) functions)
+        tainted (region-tainted-positions functions)]
+    (or
+     (first
+      (for [{:keys [params body]} functions
+            :let [ps (set params)]
+            [_ args] (region-calls body)
+            :when (not (traceable-region-base? (first args) ps))]
+        (first args)))
+     (first
+      (for [{:keys [params body]} functions
+            :let [ps (set params)]
+            form (tree-seq coll? seq body)
+            :when (and (seq? form) (contains? by-name (first form)))
+            :let [args (vec (rest form))]
+            i (get tainted (first form) #{})
+            :let [arg (nth args i nil)]
+            :when (not (and (symbol? arg) (contains? ps arg)))]
+        arg)))))
+
 (defn- verify-runtime! [{:keys [target program code exports lowering limits fuel-abi context-abi]
                          profile-value :target-profile}]
   (let [backend (target-profile/backend target)
@@ -2160,7 +2305,17 @@
                ;; missing from a second hand-written list.
                (some #(and (seq? %)
                            (contains?
-                            (into (set (keys kernel-memory-operations))
+                            ;; granted regions: the slice subfamily comes OUT
+                            ;; of this set. It is admitted for a general
+                            ;; native target below, under a provenance
+                            ;; condition this file re-derives for itself --
+                            ;; and it is subtracted here rather than
+                            ;; hand-omitted from the table above, so a new
+                            ;; slice width inherits the treatment without
+                            ;; anyone remembering to add it twice.
+                            (into (set/difference
+                                   (set (keys kernel-memory-operations))
+                                   granted-region-operations)
                                   '#{kernel-boot-info kernel-read-cr2
                                                   kernel-read-cr0 kernel-write-cr0
                                                   kernel-read-cr3 kernel-write-cr3 kernel-invlpg
@@ -2255,6 +2410,18 @@
                      (tree-seq coll? seq (:functions program))))
       (reject! "bounded kernel memory operation requires the aiueos kernel target"
                {:target target}))
+    ;; granted regions: the slice subfamily on a general native target. Its
+    ;; own refusal and its own problem keyword, because the two are different
+    ;; sentences -- above says "this machine has no such thing", here says
+    ;; "this program chose an address". A caller reading the report should not
+    ;; have to guess which one it wrote.
+    (when (and (not (contains? #{:x86_64-aiueos-kernel-v1 :aarch64-aiueos-kernel-v1
+                                 :x86_64-aiueos-uefi-v1} target))
+               (some #(and (seq? %) (contains? granted-region-operations (first %)))
+                     (tree-seq coll? seq (:functions program))))
+      (when-let [offender (granted-region-provenance (:functions program))]
+        (reject! "region base must be granted by the caller, not chosen by the program"
+                 {:target target :base offender})))
     (when-not (= expected-profile profile-value)
       (reject! "native target profile does not match target identity" {:target target}))
     (when-not emit (reject! "not a native verifier target" {:target target}))
