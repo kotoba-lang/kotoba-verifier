@@ -28,7 +28,20 @@
          ;; target identity", which reads as a bad artifact and is a pin skew.
          ;; That is exactly what the fixture in this commit was refused with
          ;; before the advance.
-         :git/sha "7324314564abf1ae05a08dbd0066c9e6c3b34921"}
+         ;;
+         ;; Advanced 2026-09-09, 73243145 -> 74426bad (osaho main, forward
+         ;; only). This repo's own `verifier_f64_boundary_test` has been
+         ;; UNRUNNABLE since it landed: it reads
+         ;; `kotoba.kir/native-float-boundary-types` across the repository
+         ;; boundary -- deliberately, so the two admission sets cannot drift
+         ;; silently -- and the pin was left one commit behind the var. The
+         ;; whole namespace failed to compile, so `clojure -M:test` stopped at
+         ;; the first file and reported ZERO tests rather than a failure.
+         ;;
+         ;; That is the shape this workspace's eighth question warns about
+         ;; from the other side: a suite that cannot run does not look like a
+         ;; suite that ran. The fix is the pin, not the test.
+         :git/sha "74426bad2fa7c8b674c9bc9469232f1b751fbf9c"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
          :git/sha "ba29522ece748d2f7ff420d2ba45b1126c94baf8"}

@@ -725,8 +725,24 @@
   ;; The negative half. Widening one type must not have widened the set: these
   ;; are rejected before and after, and if any of them started passing the gate
   ;; would have stopped being a gate.
+  ;;
+  ;; ⚠ `[:f64]` LEFT THIS LIST on 2026-09-09, and it did not leave quietly --
+  ;; it sat here asserting the opposite of a landed decision for a day, because
+  ;; this suite could not run. `verifier_f64_boundary_test` reads
+  ;; `kotoba.kir/native-float-boundary-types` across the repository boundary
+  ;; (deliberately, so the two admission sets cannot drift), and the osaho pin
+  ;; was left one commit behind the var it reads. The namespace failed to
+  ;; compile, `clojure -M:test` stopped at the first file, and the run reported
+  ;; ZERO tests rather than a failure. A suite that cannot run does not look
+  ;; like a suite that ran.
+  ;;
+  ;; So `:f64` is admitted now and asserted as such below; `:f32` is NOT, and
+  ;; that asymmetry is the current state of `native-float-boundary-types`
+  ;; rather than a decision this test makes.
+  (testing "an f64 parameter IS admitted -- the boundary widened"
+    (is (false? (function-rejected? (with-param-types [:f64])))))
   (testing "types outside the one-word slice are still refused"
-    (doseq [types [[:f64] [:f32] [:bytes] [:map] ["bool"] [nil]]]
+    (doseq [types [[:f32] [:bytes] [:map] ["bool"] [nil]]]
       (testing (pr-str types)
         (is (true? (function-rejected? (with-param-types types)))))))
   (testing "a malformed parameter-type table is still refused"
