@@ -53,6 +53,34 @@
                (fns {:name 'read-one :params '[length]
                      :body '(slice-load-u8 4096 length 0)})))))
 
+(deftest a-rodata-literal-base-is-granted-and-an-integer-one-is-not
+  ;; The pair that says what "chosen" means. `4096` is a number the program
+  ;; picked and could have picked differently -- arbitrary memory on a hosted
+  ;; target. `(bytes-literal "...")` is a relocation the backend resolves into
+  ;; a pool it placed beside the code; the program cannot make it point
+  ;; anywhere else, and the bytes it reaches are its own.
+  ;;
+  ;; This is what lets a codebook live in Kotoba. The IQ quantization formats
+  ;; decode through grids of 256, 512 or 1024 entries that belong to the
+  ;; FORMAT, and without this they stay in the C.
+  (is (nil? (provenance
+             (fns {:name 'read-table :params '[i]
+                   :body '(slice-load-u8 (bytes-literal "00ff") 2 i)}))))
+  (is (nil? (provenance
+             (fns {:name 'read-guid :params '[i]
+                   :body '(slice-load-u8 (guid "5B1B31A1-9562-11D2-8E3F-00A0C969723B") 16 i)}))))
+  (testing "and the integer literal it is distinguished from is still refused"
+    (is (= 4096 (provenance
+                 (fns {:name 'read-addr :params '[i]
+                       :body '(slice-load-u8 4096 100 i)})))))
+  (testing "a head that is not a rodata literal is not admitted by shape"
+    ;; `(kernel-boot-info)` is an address the program chose to ask for, and it
+    ;; does not exist off aiueos anyway. Admitting anything seq-shaped would
+    ;; have let it through.
+    (is (some? (provenance
+                (fns {:name 'boot :params '[i]
+                      :body '(slice-load-u8 (kernel-boot-info) 4096 i)}))))))
+
 (deftest a-computed-base-is-refused
   ;; The frontend refuses this too, earlier and with its own message. Asserted
   ;; here anyway: a gate on one route is not a gate, and if the frontend's

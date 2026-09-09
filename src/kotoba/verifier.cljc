@@ -2219,13 +2219,37 @@
             [(first form) (vec (rest form))]))
         (tree-seq coll? seq body)))
 
+(def ^:private rodata-literal-heads
+  "The heads whose value IS an address the toolchain resolved into the
+  program's own image."
+  '#{ucs2 guid bytes-literal})
+
 (defn- traceable-region-base?
-  "A base is traceable when it is a PARAMETER of the enclosing function, and
-  nothing else. Narrower than the frontend's rule, which also admits a literal
-  and `kernel-boot-info` -- both are addresses the program chose, and on a
+  "A base is traceable when it is a PARAMETER of the enclosing function, or a
+  RODATA LITERAL, and nothing else.
+
+  The parameter case is a region the caller granted. The literal case is the
+  program's OWN data: `(bytes-literal \"...\")` is not a number the program
+  picked, it is a relocation the backend resolves to a pool it placed beside
+  the code, and the program cannot make it point anywhere else. That is
+  categorically different from the integer literal this rule was written to
+  refuse -- `4096` is an address the program chose and could have chosen
+  differently; a literal's address is one it cannot choose at all.
+
+  ⚠ THE ARGUMENT IS NOT WALKED, deliberately. `(bytes-literal x)` for any `x`
+  that is not a literal string is refused by `verify-program!` long before
+  here, so admitting the head is admitting the head applied to source text.
+  Walking it would be the second implementation of a rule that already exists.
+
+  Still narrower than the frontend's, which also admits a bare integer and
+  `kernel-boot-info`. Both of those are addresses the program chose, and on a
   hosted target that is the whole hazard."
   [expr params]
-  (and (symbol? expr) (contains? params expr)))
+  (or (and (symbol? expr) (contains? params expr))
+      (and (seq? expr)
+           (contains? rodata-literal-heads (first expr))
+           (= 2 (count expr))
+           (string? (second expr)))))
 
 (defn- region-tainted-positions
   "Fixpoint: `{function-name #{param-index ...}}` for every parameter position
@@ -2399,15 +2423,62 @@
                                                   ;; the backend laid out,
                                                   ;; and only the aiueos
                                                   ;; native targets have one.
-                                                  ;; This list is already
-                                                  ;; scoped to those targets,
-                                                  ;; so the literals belong
-                                                  ;; in it -- amu refuses
-                                                  ;; them too, and a gate on
-                                                  ;; one route is not a gate.
-                                                  ucs2 guid
-                                                  bytes-literal
-                                                  bytes-literal-length
+                                                  ;;
+                                                  ;; ⚠ THAT LAST CLAUSE WAS
+                                                  ;; NOT TRUE, and the four
+                                                  ;; literal heads left this
+                                                  ;; list on 2026-09-09. A
+                                                  ;; literal pool is a place
+                                                  ;; in a CONTIGUOUS MAPPING
+                                                  ;; that holds the code, and
+                                                  ;; a hosted native target
+                                                  ;; has one too: the kexe
+                                                  ;; loader mmaps the code
+                                                  ;; buffer and jumps into
+                                                  ;; it, so `lea dst,[rip+d]`
+                                                  ;; reaches a pool the
+                                                  ;; layout pass placed
+                                                  ;; beside the code exactly
+                                                  ;; as it does in an image.
+                                                  ;; The context even carries
+                                                  ;; `code_base` and
+                                                  ;; `code_length`.
+                                                  ;;
+                                                  ;; `target-contracts` above
+                                                  ;; has exactly the two
+                                                  ;; HOSTED native targets,
+                                                  ;; so this whole function
+                                                  ;; runs for those and
+                                                  ;; nothing else -- removing
+                                                  ;; the heads here admits
+                                                  ;; them there and nowhere
+                                                  ;; near wasm or the script
+                                                  ;; backends, which really
+                                                  ;; have no pool.
+                                                  ;;
+                                                  ;; AArch64 is still refused
+                                                  ;; and by a DIFFERENT
+                                                  ;; sentence: `kotoba.mir`
+                                                  ;; answers
+                                                  ;; :rodata-address-target-mismatch
+                                                  ;; because ADRP+ADD's 4 KiB
+                                                  ;; page split is not
+                                                  ;; modelled by the layout
+                                                  ;; pass. That is a gap, it
+                                                  ;; is named as one, and it
+                                                  ;; is the next arm.
+                                                  ;;
+                                                  ;; WHY IT MATTERS: the IQ
+                                                  ;; quantization formats
+                                                  ;; decode through codebook
+                                                  ;; grids of 256, 512 or
+                                                  ;; 1024 entries that belong
+                                                  ;; to the FORMAT. Without a
+                                                  ;; pool those types stay in
+                                                  ;; the C, which is what
+                                                  ;; kotoba-native's elf64
+                                                  ;; docstring says in as many
+                                                  ;; words.
                                                   ;; boot-scratch: a `.data`
                                                   ;; reservation and a
                                                   ;; function label are
