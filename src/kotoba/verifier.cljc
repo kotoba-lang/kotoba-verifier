@@ -2251,6 +2251,30 @@
            (= 2 (count expr))
            (string? (second expr)))))
 
+(defn- let-bindings
+  "The `[name init]` pairs of a `let`, or nil when FORM is not one. Spelled as
+  a predicate over the head plus an even-length binding vector rather than
+  trusting the shape, because a malformed `let` reaching here must not be read
+  as a binding of something to nothing."
+  [form]
+  (when (and (seq? form) (= 'let (first form)) (vector? (second form))
+             (even? (count (second form))))
+    (partition 2 (second form))))
+
+(defn- traceable-initialiser?
+  "Whether binding a name to INIT should carry traceability, given the names
+  KNOWN traceable at the point of the binding.
+
+  Exactly two shapes qualify, and the narrowness is the point: a name already
+  known traceable, and a rodata literal. An integer does not, arithmetic on a
+  base does not, a call does not. So `(let [b 4096] ...)` and
+  `(let [b (+ base 1)] ...)` are refused exactly as `(slice-load-u8 4096 ...)`
+  and `(slice-load-u8 (+ base 1) ...)` are -- the rule is unchanged, and what
+  changed is that it now survives a rename."
+  [init known]
+  (or (and (symbol? init) (contains? known init))
+      (traceable-region-base? init known)))
+
 (defn- region-tainted-positions
   "Fixpoint: `{function-name #{param-index ...}}` for every parameter position
   that reaches a base. A position is tainted when it is used as a base
@@ -2271,6 +2295,11 @@
                                                     (when (and (symbol? b) (contains? ps b))
                                                       (index-of name b)))))
                                           (region-calls body))])))
+                     ;; NOTE: `direct` deliberately keys on the PARAMETER set
+                     ;; rather than on `traceable-locals`. A tainted position
+                     ;; is a parameter INDEX, so a local -- which has no index
+                     ;; -- can never be one; admitting locals here would
+                     ;; index nothing and answer nil.
                      functions)]
     (loop [tainted direct]
       (let [next-tainted
@@ -2300,31 +2329,68 @@
 (defn- granted-region-provenance
   "nil when every base in FUNCTIONS is traceable, else the offending form.
 
-  Two conditions, checked separately so the refusal can say which one broke:
-  every base is a parameter of its own function, and every argument flowing
-  into a tainted parameter position of an internal callee is a parameter too.
-  The second is what stops a caller from being the hole its callee's own check
-  closed."
+  Two conditions, checked in ONE scoped walk so the refusal can still say
+  which one broke: every base is traceable where it stands, and every
+  argument flowing into a tainted parameter position of an internal callee is
+  traceable too. The second is what stops a caller from being the hole its
+  callee's own check closed.
+
+  ⚠ THE WALK IS SCOPED RATHER THAN FLAT, and it has to be. The frontend
+  lowers `(let [s (slice-of-u8 base length)] ...)` into
+  `(let [__kotoba_slice_s_base base ...] ...)`, so the base an access sees is
+  a LOCAL and not the parameter the program wrote; a check that admitted only
+  parameters refused a program whose base IS a parameter, for the shape of
+  the lowering rather than for anything the program did.
+
+  Following the binding needs scope because SHADOWING is the one way it could
+  go wrong: `(let [base 4096] (slice-load-u8 base ...))` rebinds a name that
+  was a parameter to a number the program chose. A flat set of traceable
+  names cannot express that -- it would still hold `base` from the parameter
+  list -- so the set travels with the walk and a non-qualifying initialiser
+  DISCARDS the name."
   [functions]
   (let [by-name (into {} (map (juxt :name identity)) functions)
-        tainted (region-tainted-positions functions)]
-    (or
-     (first
-      (for [{:keys [params body]} functions
-            :let [ps (set params)]
-            [_ args] (region-calls body)
-            :when (not (traceable-region-base? (first args) ps))]
-        (first args)))
-     (first
-      (for [{:keys [params body]} functions
-            :let [ps (set params)]
-            form (tree-seq coll? seq body)
-            :when (and (seq? form) (contains? by-name (first form)))
-            :let [args (vec (rest form))]
-            i (get tainted (first form) #{})
-            :let [arg (nth args i nil)]
-            :when (not (and (symbol? arg) (contains? ps arg)))]
-        arg)))))
+        tainted (region-tainted-positions functions)
+        scan (fn scan [known form]
+               (cond
+                 (let-bindings form)
+                 (let [pairs (let-bindings form)]
+                   (or
+                    ;; Initialisers are checked in the OUTER scope and the
+                    ;; body in the inner one, which is what `let` means.
+                    (some #(scan known (second %)) pairs)
+                    (let [known' (reduce (fn [acc [name init]]
+                                           (if (traceable-initialiser? init acc)
+                                             (conj acc name)
+                                             (disj acc name)))
+                                         known
+                                         pairs)]
+                      (some #(scan known' %) (drop 2 form)))))
+
+                 (and (seq? form) (region-base-position (first form)))
+                 (let [base (second form)]
+                   (if (traceable-region-base? base known)
+                     (some #(scan known %) (drop 2 form))
+                     base))
+
+                 (and (seq? form) (contains? by-name (first form)))
+                 (let [args (vec (rest form))]
+                   ;; ⚠ An ABSENT argument at a tainted position answers nil
+                   ;; here and is therefore not reported -- unchanged from the
+                   ;; check this replaced. It is not a hole: a call with the
+                   ;; wrong arity is refused by the arity check long before
+                   ;; provenance runs, so the only way to reach this is a
+                   ;; program that is already rejected.
+                   (or (some (fn [i]
+                               (let [arg (nth args i nil)]
+                                 (when-not (traceable-region-base? arg known)
+                                   arg)))
+                             (get tainted (first form) #{}))
+                       (some #(scan known %) args)))
+
+                 (coll? form) (some #(scan known %) (seq form))
+                 :else nil))]
+    (some (fn [{:keys [params body]}] (scan (set params) body)) functions)))
 
 (defn- verify-runtime! [{:keys [target program code exports lowering limits fuel-abi context-abi]
                          profile-value :target-profile}]

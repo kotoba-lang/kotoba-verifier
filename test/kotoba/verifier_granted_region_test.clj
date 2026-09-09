@@ -164,3 +164,85 @@
     (is (empty? (filter #(= "kernel-load-u8" (name %)) granted)))
     (is (not (contains? granted 'kernel-load-u8)))
     (is (not (contains? granted 'kernel-store-u64-4k)))))
+
+;; ---------------------------------------------------------------------------
+;; A base bound by a `let` -- which is the shape the frontend actually emits
+;; ---------------------------------------------------------------------------
+
+(deftest a-base-bound-to-a-parameter-is-still-granted
+  ;; ⚠ MEASURED SHAPE, not an invented one. `amu`'s frontend lowers
+  ;;
+  ;;     (let [s (slice-of-u8 base length)] (slice-get s 0))
+  ;;
+  ;; into
+  ;;
+  ;;     (let [__kotoba_slice_s_base base __kotoba_slice_s_len length]
+  ;;       (slice-load-u8 __kotoba_slice_s_base __kotoba_slice_s_len 0))
+  ;;
+  ;; so the base an access sees is a LOCAL, not the parameter the program
+  ;; wrote. Refusing that refused a program whose base IS a parameter, for the
+  ;; shape of the lowering rather than for anything the program did.
+  ;;
+  ;; Measured 2026-09-09 with `amu compile --target aarch64` before the fix:
+  ;; "region base must be granted by the caller, not chosen by the program".
+  (is (nil? (provenance
+             (fns {:name 'two :params '[base length]
+                   :body '(let [__kotoba_slice_s_base base
+                                __kotoba_slice_s_len length]
+                            (+ (slice-load-u8 __kotoba_slice_s_base
+                                              __kotoba_slice_s_len 0)
+                               (slice-load-u8 __kotoba_slice_s_base
+                                              __kotoba_slice_s_len 1)))}))))
+  (testing "and a chain of renames is still one parameter"
+    (is (nil? (provenance
+               (fns {:name 'two :params '[base length]
+                     :body '(let [a base]
+                              (let [b a]
+                                (slice-load-u8 b length 0)))}))))))
+
+(deftest a-local-bound-to-a-number-is-not-granted
+  ;; THE CONTROL, and the reason following the binding is not a hole. Only
+  ;; two initialiser shapes qualify -- a name already known traceable, and a
+  ;; rodata literal. An integer does not, so the rule is exactly what it was
+  ;; before; what changed is that it now survives a rename.
+  (is (some? (provenance
+              (fns {:name 'go :params '[length]
+                    :body '(let [b 4096] (slice-load-u8 b length 0))}))))
+  (testing "nor is arithmetic on one that is"
+    (is (some? (provenance
+                (fns {:name 'go :params '[base length]
+                      :body '(let [b (+ base 1)]
+                               (slice-load-u8 b length 0))})))))
+  (testing "and the offending form the report names is the LOCAL"
+    ;; Not the initialiser: the caller reading the report wrote `b` in the
+    ;; base position, and naming `4096` would point at a line that is
+    ;; perfectly legal on its own.
+    (is (= 'b (provenance
+               (fns {:name 'go :params '[length]
+                     :body '(let [b 4096] (slice-load-u8 b length 0))}))))))
+
+(deftest an-inner-binding-shadows-rather-than-inherits
+  ;; The one way following bindings could go wrong: a name that WAS a
+  ;; parameter, rebound to something chosen. Discarding on a non-qualifying
+  ;; initialiser is what makes the inner `base` refused even though the outer
+  ;; one is a parameter.
+  (is (some? (provenance
+              (fns {:name 'go :params '[base length]
+                    :body '(let [base 4096]
+                             (slice-load-u8 base length 0))}))))
+  (testing "and the outer one is unaffected once the inner scope ends"
+    ;; Two separate `let`s rather than nesting: the second must not inherit
+    ;; the first's discard.
+    (is (nil? (provenance
+               (fns {:name 'go :params '[base length]
+                     :body '(+ (let [x 4096] x)
+                               (slice-load-u8 base length 0))}))))))
+
+(deftest a-rodata-literal-bound-by-a-let-is-still-the-programs-own-bytes
+  ;; The codebook shape after lowering: the pool's address is bound once and
+  ;; read many times. A literal admitted only in the base position would be a
+  ;; pool readable only by the expression that names it.
+  (is (nil? (provenance
+             (fns {:name 'kv :params '[index]
+                   :body '(let [p (bytes-literal "8198adbf")]
+                            (slice-load-u8 p 4 index))})))))
