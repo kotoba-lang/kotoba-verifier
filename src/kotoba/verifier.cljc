@@ -2354,18 +2354,28 @@
         scan (fn scan [known form]
                (cond
                  (let-bindings form)
-                 (let [pairs (let-bindings form)]
-                   (or
-                    ;; Initialisers are checked in the OUTER scope and the
-                    ;; body in the inner one, which is what `let` means.
-                    (some #(scan known (second %)) pairs)
-                    (let [known' (reduce (fn [acc [name init]]
-                                           (if (traceable-initialiser? init acc)
-                                             (conj acc name)
-                                             (disj acc name)))
-                                         known
-                                         pairs)]
-                      (some #(scan known' %) (drop 2 form)))))
+                 ;; ⚠ `let` IS SEQUENTIAL, and the first version of this walk
+                 ;; got it wrong. Every binding sees the ones before it, which
+                 ;; is exactly the shape the frontend emits:
+                 ;;
+                 ;;   (let [__kotoba_slice_b_base base
+                 ;;         __kotoba_slice_b_len  length
+                 ;;         d (slice-load-u8 __kotoba_slice_b_base ...)]
+                 ;;     ...)
+                 ;;
+                 ;; Scanning every initialiser under the OUTER scope refused
+                 ;; `d`'s access, because the base it names had not been added
+                 ;; yet. Measured 2026-09-09: `amu compile --target aarch64`
+                 ;; of an IQ4_XS dequant answered "region base must be granted
+                 ;; by the caller" for a base bound two lines above it.
+                 (loop [pairs (let-bindings form) env known]
+                   (if-let [[name init] (first pairs)]
+                     (or (scan env init)
+                         (recur (next pairs)
+                                (if (traceable-initialiser? init env)
+                                  (conj env name)
+                                  (disj env name))))
+                     (some #(scan env %) (drop 2 form))))
 
                  (and (seq? form) (region-base-position (first form)))
                  (let [base (second form)]
