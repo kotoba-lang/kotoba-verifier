@@ -246,3 +246,32 @@
              (fns {:name 'kv :params '[index]
                    :body '(let [p (bytes-literal "8198adbf")]
                             (slice-load-u8 p 4 index))})))))
+
+(deftest a-let-is-sequential-so-a-later-binding-sees-an-earlier-one
+  ;; ⚠ THE SHAPE THE FRONTEND ACTUALLY EMITS, and the one the first version
+  ;; of the scoped walk got wrong. `amu` puts the slice's base, its length and
+  ;; every value derived from them in ONE `let`, so a binding whose
+  ;; initialiser reads the region sits after the binding that names its base.
+  ;;
+  ;; Scanning every initialiser under the outer scope refused that access,
+  ;; because the base it named had not been added yet. Measured 2026-09-09
+  ;; with `amu compile --target aarch64` of an IQ4_XS dequant: "region base
+  ;; must be granted by the caller, not chosen by the program", for a base
+  ;; bound two lines above the access.
+  (is (nil? (provenance
+             (fns {:name 'go :params '[base length]
+                   :body '(let [b base
+                                l length
+                                d (slice-load-u8 b l 0)
+                                e (slice-load-u8 b l 1)]
+                            (+ d e))}))))
+  (testing "and an initialiser still cannot see the binding it is part of"
+    ;; The other direction: `b` is not in scope for its own initialiser, so
+    ;; `(let [b b] ...)` where the outer `b` is untraceable stays refused. A
+    ;; walk that added the name before scanning the initialiser would admit
+    ;; a base bound to itself.
+    (is (some? (provenance
+                (fns {:name 'go :params '[length]
+                      :body '(let [b 4096
+                                   b b]
+                               (slice-load-u8 b length 0))}))))))
