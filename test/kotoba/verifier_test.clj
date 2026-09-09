@@ -1535,6 +1535,41 @@
            (kotoba.verifier/verify-artifact!
             (privileged-artifact :x86_64-kotoba-v1 (privileged-kir body))))))))
 
+(deftest a-function-address-is-admitted-on-a-hosted-native-target
+  ;; ⚠ `kernel-function-address` LEFT THE AIUEOS-ONLY SET on 2026-09-09, and
+  ;; the reason is that it had never had a reason of its own. It sat in that
+  ;; set beside `kernel-scratch-region` under one comment -- "a `.data`
+  ;; reservation and a function label are places in an image the toolchain
+  ;; laid out" -- and the reason belonged to the reservation.
+  ;;
+  ;; A function's label is a place in the EMITTED BUFFER, which every native
+  ;; target has: the kexe loader mmaps that buffer and jumps into it. The
+  ;; backend reaches it with the same instruction it reaches the literal pool
+  ;; with, `lea …,[rip+disp32]` on x86-64 and `adr` on AArch64.
+  ;;
+  ;; Two heads listed together under one reason, where the reason belonged to
+  ;; one of them. That is the shape to look for.
+  (let [artifact (privileged-artifact
+                  :x86_64-kotoba-v1
+                  (privileged-kir '(kernel-function-address main)))]
+    (is (= artifact (kotoba.verifier/verify-artifact! artifact))))
+  (testing "and on the aiueos targets it still is, so nothing was traded away"
+    (doseq [target [:x86_64-aiueos-uefi-v1 :x86_64-aiueos-kernel-v1]]
+      (let [artifact (privileged-artifact
+                      target (privileged-kir '(kernel-function-address main)))]
+        (is (= artifact (kotoba.verifier/verify-artifact! artifact))))))
+  (testing "THE CONTROL: the head it used to share a reason with is still refused"
+    ;; `kernel-scratch-region`'s answer outside an aiueos image is WRONG
+    ;; rather than absent -- `lea r10,[r9+0x60]` names the global descriptor
+    ;; table in a kernel image. If a later change removed the pair wholesale
+    ;; rather than the one head that was measured, this is what goes red.
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"bounded kernel memory operation requires the aiueos kernel target"
+         (kotoba.verifier/verify-artifact!
+          (privileged-artifact :x86_64-kotoba-v1
+                               (privileged-kir '(kernel-scratch-region))))))))
+
 (deftest the-firmware-boundary-marks-a-module-kernel-native
   ;; This set decides whether the oracle re-executes an entry, and the same
   ;; decision is made independently in `kotoba.kir/lower`. When the two
