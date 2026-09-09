@@ -2480,14 +2480,46 @@
                                                   ;; docstring says in as many
                                                   ;; words.
                                                   ;; boot-scratch: a `.data`
-                                                  ;; reservation and a
-                                                  ;; function label are
-                                                  ;; places in an image the
-                                                  ;; toolchain laid out, and
-                                                  ;; only the aiueos native
-                                                  ;; targets have one.
+                                                  ;; reservation is a place in
+                                                  ;; an image the toolchain
+                                                  ;; laid out, and only the
+                                                  ;; aiueos native targets
+                                                  ;; have one -- the backend's
+                                                  ;; answer for it elsewhere
+                                                  ;; is WRONG rather than
+                                                  ;; absent, because
+                                                  ;; `lea r10,[r9+0x60]` names
+                                                  ;; the global descriptor
+                                                  ;; table in a kernel image.
                                                   kernel-scratch-region
-                                                  kernel-function-address
+                                                  ;; ⚠ `kernel-function-address`
+                                                  ;; LEFT THIS SET on
+                                                  ;; 2026-09-09, and the
+                                                  ;; sentence above is why it
+                                                  ;; could: it was here on the
+                                                  ;; strength of "and a
+                                                  ;; function label", sharing
+                                                  ;; a reason with the
+                                                  ;; reservation that it never
+                                                  ;; actually shared. A
+                                                  ;; function's label is a
+                                                  ;; place in the EMITTED
+                                                  ;; BUFFER, which every
+                                                  ;; native target has -- the
+                                                  ;; kexe loader mmaps that
+                                                  ;; buffer and jumps into it
+                                                  ;; -- and the backend
+                                                  ;; reaches it with the same
+                                                  ;; instruction it reaches
+                                                  ;; the literal pool with:
+                                                  ;; `lea …,[rip+disp32]` on
+                                                  ;; x86-64, `adr` on AArch64.
+                                                  ;;
+                                                  ;; Two heads listed together
+                                                  ;; under one reason, where
+                                                  ;; the reason belonged to
+                                                  ;; one of them. That is the
+                                                  ;; shape to look for.
                                                   ;; fwstore: the allocation
                                                   ;; calls through a pointer
                                                   ;; read out of firmware
