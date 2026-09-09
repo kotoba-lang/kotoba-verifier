@@ -13,6 +13,7 @@
    Namespaces listed here must be `.cljc`. Adding a `.clj`-only test to this
    list is how the list quietly stops meaning what it says."
   (:require [cljs.test :as t]
+            [kotoba.verifier-f64-boundary-test]
             [kotoba.verifier-shift-literal-test]
             ;; signing moved from .clj to .cljc on 2026-09-08; this is the
             ;; half that checks the JVM's bytes from the Node side.
@@ -37,6 +38,7 @@
 ;; a test had not run. The docstring above warns that adding a `.clj`-only
 ;; test is "how the list quietly stops meaning what it says" -- the list had
 ;; already stopped meaning it, in the other direction.
-(t/run-tests 'kotoba.verifier-shift-literal-test
+(t/run-tests 'kotoba.verifier-f64-boundary-test
+             'kotoba.verifier-shift-literal-test
              'kotoba.verifier-signing-parity-test
              'kotoba.verifier-native-artifact-test)

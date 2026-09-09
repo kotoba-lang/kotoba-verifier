@@ -1666,6 +1666,22 @@
 ;; `(defn f [n] (string-substring ...))` unverifiable, and with it every
 ;; string-returning helper the frontend synthesizes, `string-from-i64` among
 ;; them. Nothing had a string-returning function before, so nothing caught it.
+(def native-float-boundary-types
+  "Independent verifier copy of the float types a native SIGNATURE may declare.
+
+  `kotoba.kir/native-float-boundary-types` is the other copy, and the two are
+  compared by `kotoba.verifier-kir-agreement-test` rather than shared: this
+  side re-derives what native admits, because being stricter here is sound and
+  being looser is not (ADR 0024). A field is still excluded -- the reason
+  `native-word-field-types` gives, that a field's declared type is not read at
+  runtime, holds there and not in a signature, where the width IS the
+  declaration and both sides of the call read it at compile time.
+
+  Public, not `^:private`, for the reason kir's float sets are: the agreement
+  test reads both copies across the repository boundary and fails naming the
+  difference. Being stricter here is sound; drifting apart silently is not."
+  #{:f64})
+
 (def ^:private function-result-types #{:i64 :bool :string})
 
 ;; A type an INTERNAL function boundary may carry. Every admitted shape is one
@@ -1732,6 +1748,7 @@
 ;; removed guard.
 (defn- native-boundary-type? [type]
   (or (contains? native-word-field-types type)
+      (contains? native-float-boundary-types type)
       ;; `:bool` reaches admission through the first two clauses --
       ;; `native-word-field-types` and `native-word-value-type?` have both
       ;; listed it since each was written. The removed `(not= :bool type)`
@@ -1924,6 +1941,8 @@
                                ;; one word, built from the arena primitives
                                ;; already contracted here.
                                (or (contains? function-result-types (:result function))
+                                   (contains? native-float-boundary-types
+                                              (:result function))
                                    (and exported?
                                         (not= (:name function) (:entry program))
                                         (empty? (:params function))
