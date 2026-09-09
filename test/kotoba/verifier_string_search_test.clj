@@ -1,5 +1,6 @@
 (ns kotoba.verifier-string-search-test
-  "`string-contains?` and `string-replace-all` pass runtime KIR verification.
+  "`string-contains?`, `string-index-of` and `string-replace-all` pass runtime
+  KIR verification.
 
   This verifier re-derives its own operation tables rather than importing
   anyone's, which is the property that makes it worth having -- and is also why
@@ -9,8 +10,15 @@
   (`kotoba.native.string-search`, its ADR 0002) and neither could be reached
   from source, because opening one gate leaves the other closed.
 
-  What is pinned here is the arity contract: the two shapes with a lowering are
-  admitted, every other arity is refused, and the operands are still verified."
+  `string-index-of` joined them on 2026-09-09, lowered by the same namespace as
+  the same scan `string-contains?` uses -- it returns the offset that scan had
+  already computed rather than folding it to 0/1. It reached this gate only
+  after the backend's, which refuses an unlowered head one step earlier as
+  `aggregate ABI rejected: call-abi-not-admitted`.
+
+  What is pinned here is the arity contract: the three shapes with a lowering
+  are admitted, every other arity is refused, and the operands are still
+  verified."
   (:require [clojure.test :refer [deftest is testing]]
             [kotoba.verifier]))
 
@@ -27,6 +35,7 @@
 
 (deftest both-operations-verify
   (doseq [body ['(string-contains? "haystack" "needle")
+                '(string-index-of "haystack" "needle")
                 '(string-replace-all "subject" "needle" "replacement")]]
     (testing (str body)
       (is (nil? (rejection body))))))
@@ -41,6 +50,8 @@
   ;; is what makes it fail when the entries are removed.
   (doseq [body ['(string-contains? "haystack")
                 '(string-contains? "haystack" "needle" "extra")
+                '(string-index-of "haystack")
+                '(string-index-of "haystack" "needle" "extra")
                 '(string-replace-all "s" "n")
                 '(string-replace-all "s" "n" "r" "extra")]]
     (testing (str body)
@@ -50,6 +61,8 @@
   ;; Admitting an operation must not stop its operands being walked -- a table
   ;; entry drives an arity check AND a recursive verification of each argument.
   (doseq [body ['(string-contains? (unknown-op 1) "needle")
+                '(string-index-of (unknown-op 1) "needle")
+                '(string-index-of "haystack" (unknown-op 1))
                 '(string-replace-all "s" "n" (unknown-op 1))]]
     (testing (str body)
       (is (= "runtime KIR operation rejected" (rejection body))))))
