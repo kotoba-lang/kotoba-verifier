@@ -335,9 +335,26 @@
 ;; first, and opening either one alone unlocks nothing -- the lowering moved
 ;; murakumo's shipped-core sweep by exactly zero until both landed. See ADR
 ;; 0002 here, and `kotoba-kir` ADR 0222 for the other gate.
+;;
+;; `string-index-of` joins them on 2026-09-09 and on exactly the same stance.
+;; It is a target-independent operation with a written contract
+;; (`kotoba-lang/lang/guest-grammar.edn`: first UTF-8 byte offset of the needle,
+;; -1 when absent, empty needle refused) that `kotoba.kir/execute` has run since
+;; osaho 375cb65; what was missing was only the native emission, and that is
+;; kotoba-native's `lower-index-of` -- the SAME scan `string-contains?` already
+;; lowers to, returning the offset the scan had already computed instead of
+;; folding it to 0/1. So no new callback, no new value representation, no ABI
+;; change, and nothing here that was not already ratified for `string-contains?`.
+;;
+;; Measured the same day, before this entry: the operation was refused one gate
+;; EARLIER, by the native backend's `aggregate ABI rejected:
+;; call-abi-not-admitted` -- an unlowered head is call-shaped, so it never got
+;; this far. That is why this table alone could not have been tested for it, and
+;; why the arity below is re-derived from the KIR contract rather than observed
+;; from a refusal.
 (def ^:private string-operations
   '{string-byte-length 1 string=? 2 string-concat 2 string-substring 3 string-code-point-at 2
-    string-contains? 2 string-replace-all 3
+    string-contains? 2 string-index-of 2 string-replace-all 3
     keyword-name 1 keyword-from-string 1})
 (def ^:private tagged-i64-operations
   '{option-some 1 option-none 0 option-some? 1 option-value 2
