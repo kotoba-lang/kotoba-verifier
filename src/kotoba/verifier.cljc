@@ -1063,8 +1063,17 @@
           ;; route accepted the same program. Fail-closed is unchanged: a
           ;; non-literal or out-of-range count still reaches the same
           ;; refusal on both hosts.
+          ;; Widened 2026-09-10, the fourth and last gate on this operand.
+          ;; A LITERAL count keeps its range check here, so an out-of-range
+          ;; constant is still refused. A COMPUTED count is now admitted and
+          ;; verified as an ordinary expression by the `doseq` below -- the
+          ;; backend owes the range guard instead, and x86-64 emits one
+          ;; (`cmp rcx,63 / jbe / ud2`) while aarch64 refuses to lower it at
+          ;; all until its own guard exists. Fail-closed is preserved by
+          ;; moving where it is enforced, not by removing it.
           (when (and (contains? i64-shifts op)
-                     (not (and (guest-integer? (second args)) (<= 0 (second args) 63))))
+                     (guest-integer? (second args))
+                     (not (<= 0 (second args) 63)))
             (reject! "runtime KIR i64 shift count rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
