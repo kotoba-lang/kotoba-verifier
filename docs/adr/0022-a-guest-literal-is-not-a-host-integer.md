@@ -69,7 +69,7 @@ run it.
    compare bigint against number directly, so `(<= 0 n 63)` is exact on both
    hosts once `n` is known to be one of the two admitted representations.
 
-2. `run-tests.cljs` runs the portable slice on nbb, alongside the JVM suite.
+2. `run-tests.cljk` runs the portable slice on nbb, alongside the JVM suite.
    Its namespaces must be `.cljc`.
 
 Fail-closed is unchanged. A non-literal or out-of-range count still reaches
@@ -77,7 +77,7 @@ the same refusal, with the same reason literal, on both hosts.
 
 ## Consequences
 
-- `test/kotoba/verifier_shift_literal_test.cljc` builds the count through
+- `test/kotoba/verifier_shift_literal_test.cljk` builds the count through
   `guest-int`, which is `(long n)` on `:clj` and `(js/BigInt n)` on `:cljs` --
   the representation the running host's reader actually produces. This is the
   whole reason the cljs half can go red: a quoted `4` written in a test file is
@@ -93,7 +93,7 @@ the same refusal, with the same reason literal, on both hosts.
   on the non-literal cases, JVM through the `ClassCastException` that the
   literal test is what prevents.
 - Counts: JVM `clojure -M:test` 71 tests / 420 assertions, nbb
-  `run-tests.cljs` 8 tests / 91 assertions, 0 failures on both.
+  `run-tests.cljk` 8 tests / 91 assertions, 0 failures on both.
 - Not addressed here: the other direction of the same asymmetry. The JVM suite
   covers 71 tests and the nbb entry covers 1 namespace. Every remaining
   `.clj`-only test is a rule this repository has never checked on the host
