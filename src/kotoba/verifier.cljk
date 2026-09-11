@@ -114,7 +114,7 @@
 (defn- reject! [message data]
   (throw (ex-info message (assoc data :phase :verify))))
 
-(defn- guest-integer?
+(defn guest-integer?
   "True for a value that IS a `.kotoba` integer literal as it reaches this
   verifier, on either compiler host.
 

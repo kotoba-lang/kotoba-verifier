@@ -17,7 +17,11 @@
   self-consistent and still disagree with the other one about DER, and a
   suite that only ever signs and verifies within one process cannot see it."
   (:require [clojure.test :as t :refer [deftest is testing]]
-            [kotoba.verifier.signing :as signing]))
+            [clojure.edn :as edn]
+            [kotoba.verifier.signing :as signing]
+            #?(:clj [clojure.java.io :as io])
+            #?(:cljs ["node:fs" :as fs])
+            #?(:cljs ["node:path" :as path])))
 
 (def ^:private node-key
   {:format :kotoba.signing-key/v1
@@ -52,3 +56,77 @@
         v {:local "roundtrip"}]
     (is (signing/valid-key? k))
     (is (signing/verify-value (:public-key k) v (signing/sign-value k v)))))
+
+;; ---------------------------------------------------------------------------
+;; Validity bounds in the host's own integer representation.
+;;
+;; On Node every integer token the kotoba reader returns is a `bigint`, and
+;; cljs `integer?` says false to a bigint. `sign` and `verify` were spelled
+;; with `integer?`, so an envelope signed here, written out, and read back
+;; with the compiler's reader was refused as "signature statement mismatch"
+;; -- measured 2026-09-11 in amu while porting `keygen`/`sign`/`verify` off
+;; the JVM route. The artifact fixture below is the same one
+;; `verifier-native-artifact-test` verifies on both hosts, coerced the same
+;; way, because `sign` verifies the artifact before it signs it.
+
+(defn- host-integers [artifact]
+  #?(:clj artifact
+     :cljs (letfn [(walk [v]
+                     (cond
+                       (and (number? v) (js/Number.isInteger v)) (js/BigInt v)
+                       (map? v) (into (empty v) (map (fn [[k x]] [k (walk x)])) v)
+                       (vector? v) (mapv walk v)
+                       (set? v) (into #{} (map walk) v)
+                       :else v))]
+             (walk artifact))))
+
+(defn- demo-artifact []
+  (host-integers
+   (edn/read-string
+    #?(:clj (slurp (io/resource "fixtures/aarch64-demo.kexe"))
+       :cljs (fs/readFileSync (path/join "resources" "fixtures" "aarch64-demo.kexe") "utf8")))))
+
+(defn- host-int [n]
+  #?(:clj n :cljs (js/BigInt n)))
+
+(defn- trust-for [key]
+  {:format :kotoba.trust/v1 :trusted-signers #{(:signer key)}
+   :revoked-signers #{} :revoked-artifacts #{}
+   :trusted-runtime-sha256 #{} :revoked-runtime-sha256 #{}})
+
+(deftest validity-bounds-in-the-host-integer-representation-verify
+  (let [key (signing/generate-keypair)
+        artifact (demo-artifact)
+        ;; the bounds as the compiler's reader would hand them back: bigint
+        ;; on Node, long on the JVM
+        envelope (signing/sign artifact key {:not-before (host-int 0)
+                                             :expires (host-int 4102444800)})
+        result (signing/verify envelope (trust-for key) 1000)]
+    (is (true? (:verified? result)))
+    (is (= (:signer key) (:signer result)))))
+
+(deftest a-non-integer-validity-bound-is-still-refused-for-the-stated-reason
+  (testing "the predicate widened to the host's integer, not to everything"
+    (let [key (signing/generate-keypair)
+          artifact (demo-artifact)
+          envelope (signing/sign artifact key {:not-before (host-int 0)
+                                               :expires (host-int 4102444800)})
+          forged (assoc-in envelope [:statement :expires] "4102444800")
+          refusal (try (signing/verify forged (trust-for key) 1000) nil
+                       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+                         (ex-message e)))]
+      (is (= "signature statement mismatch" refusal)))))
+
+(deftest a-mixed-representation-comparison-is-exact
+  (testing "`now` arrives from the CLI as a host number; the bounds may be bigint"
+    (let [key (signing/generate-keypair)
+          artifact (demo-artifact)
+          envelope (signing/sign artifact key {:not-before (host-int 100)
+                                               :expires (host-int 200)})
+          refusal (fn [now] (try (signing/verify envelope (trust-for key) now) nil
+                                 (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+                                   (ex-message e))))]
+      (is (= "signature is not yet valid" (refusal 99)))
+      (is (nil? (refusal 100)))
+      (is (nil? (refusal 199)))
+      (is (= "signature is expired" (refusal 200))))))
