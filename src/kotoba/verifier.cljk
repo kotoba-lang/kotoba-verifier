@@ -1,4 +1,5 @@
 (ns kotoba.verifier
+  {:kotoba/export [*call-results* guest-integer? max-expression-nodes max-functions max-lowered-nodes native-float-boundary-types target-contracts verify-artifact!]}
   #?(:clj (:require [clojure.set :as set]
                     [kotoba.artifact.core :as artifact]
                     ;; boot-lit: the single decoder for a read-only literal.
