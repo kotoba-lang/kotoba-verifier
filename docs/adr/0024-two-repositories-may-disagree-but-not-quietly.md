@@ -81,5 +81,5 @@ The comment now says that. Nothing about the verifier's behaviour changes.
 
 ## Evidence
 
-`clojure -M:test`, whole suite, at the bumped pin.
-`clojure -M:test -n kotoba.verifier-kir-agreement-test`: 3 tests, 37 assertions.
+`kbb -M:test`, whole suite, at the bumped pin.
+`kbb -M:test -n kotoba.verifier-kir-agreement-test`: 3 tests, 37 assertions.

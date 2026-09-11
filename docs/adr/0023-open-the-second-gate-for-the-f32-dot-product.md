@@ -58,7 +58,7 @@ mismatch it never had.
 
 ## Evidence
 
-`clojure -M:test -n kotoba.verifier-test`: 66 tests / 420 assertions, 0
+`kbb -M:test -n kotoba.verifier-test`: 66 tests / 420 assertions, 0
 failures (was 63 / 411).
 
 Removing both rows again turns all three new tests red by name:

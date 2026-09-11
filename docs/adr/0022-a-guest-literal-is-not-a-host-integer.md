@@ -52,7 +52,7 @@ inline. The two shift sites were the ones where someone reasoned about it
 instead and got a different answer.
 
 The reason nobody saw it: this repository's only test entry was
-`clojure -M:test`. A verifier whose entire value is re-deriving a rule
+`kbb -M:test`. A verifier whose entire value is re-deriving a rule
 independently of the producer was being exercised on one of the two hosts that
 run it.
 
@@ -92,7 +92,7 @@ the same refusal, with the same reason literal, on both hosts.
   reproduced by the test. Weakening the predicate to `some?`: both hosts red
   on the non-literal cases, JVM through the `ClassCastException` that the
   literal test is what prevents.
-- Counts: JVM `clojure -M:test` 71 tests / 420 assertions, nbb
+- Counts: JVM `kbb -M:test` 71 tests / 420 assertions, nbb
   `run-tests.cljk` 8 tests / 91 assertions, 0 failures on both.
 - Not addressed here: the other direction of the same asymmetry. The JVM suite
   covers 71 tests and the nbb entry covers 1 namespace. Every remaining

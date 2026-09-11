@@ -732,7 +732,7 @@
   ;; `kotoba.kir/native-float-boundary-types` across the repository boundary
   ;; (deliberately, so the two admission sets cannot drift), and the osaho pin
   ;; was left one commit behind the var it reads. The namespace failed to
-  ;; compile, `clojure -M:test` stopped at the first file, and the run reported
+  ;; compile, `kbb -M:test` stopped at the first file, and the run reported
   ;; ZERO tests rather than a failure. A suite that cannot run does not look
   ;; like a suite that ran.
   ;;
