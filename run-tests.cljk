@@ -1,7 +1,7 @@
 (ns run-tests
   "The portable slice of the verifier on nbb -- the JDK-free compiler host.
 
-   nbb --classpath \"src:test:$(clojure -Spath -M:test)\" run-tests.cljs
+   nbb --classpath \"src:test:$(clojure -Spath -M:test)\" run-tests.cljk
 
    This repository had only `clojure -M:test` until 2026-09-02. A verifier
    whose whole job is to re-derive a rule independently was being exercised on

@@ -31,7 +31,7 @@ address.
 
 ## Evidence
 
-`test/kotoba/verifier_test.clj`, three tests, each per format: admitted at
+`test/kotoba/verifier_test.cljk`, three tests, each per format: admitted at
 arity five with parameters and with literals; rejected at four, three and six
 with the reason pinned; present in `kernel-native-operations` and absent from
 `kernel-memory-operations`. Suite: 74 tests / 481 assertions.

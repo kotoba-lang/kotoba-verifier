@@ -61,7 +61,7 @@ the verifier's independently derived record or variant predicates.
 
 ```bash
 clojure -M:test
-nbb --classpath "src:test:$(clojure -Spath -M:test)" run-tests.cljs
+nbb --classpath "src:test:$(clojure -Spath -M:test)" run-tests.cljk
 ```
 
 Both, not either. This verifier runs on two compiler hosts and they represent
