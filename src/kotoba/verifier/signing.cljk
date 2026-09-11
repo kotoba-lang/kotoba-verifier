@@ -165,7 +165,17 @@
   (verifier/verify-artifact! kexe)
   (when-not (valid-key? key)
     (throw (ex-info "malformed Ed25519 signing key" {:phase :sign})))
-  (when-not (and (integer? not-before) (integer? expires) (< not-before expires))
+  ;; `verifier/guest-integer?`, not `integer?`: a validity bound read back
+  ;; from an envelope on the Node host is a `bigint` (every integer token the
+  ;; kotoba reader returns is one), and cljs `integer?` says false to it.
+  ;; Measured 2026-09-11 in amu: an envelope signed here, written with
+  ;; `artifact/edn-safe`, read back with the kotoba reader, refused as
+  ;; "signature statement mismatch" -- while the same bytes read with
+  ;; `cljs.reader` verified, at the price of every i64 in the artifact.
+  ;; The relational operators are exact across the two representations.
+  (when-not (and (verifier/guest-integer? not-before)
+                 (verifier/guest-integer? expires)
+                 (< not-before expires))
     (throw (ex-info "invalid signature validity interval" {:phase :sign})))
   (let [statement (statement kexe key not-before expires)
         signature (sign-value key statement)]
@@ -188,7 +198,9 @@
                    (= :kotoba.signature-statement/v1 (:format statement))
                    (= signer (signer-id public-key))
                    (= artifact-sha256 (:sha256 artifact))
-                   (integer? not-before) (integer? expires) (< not-before expires)
+                   (verifier/guest-integer? not-before)
+                   (verifier/guest-integer? expires)
+                   (< not-before expires)
                    (string? signature))
       (throw (ex-info "signature statement mismatch" {:phase :signature})))
     (when-not (verify-value public-key statement signature)
