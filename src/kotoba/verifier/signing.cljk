@@ -12,6 +12,7 @@
   is deterministic, so the same key over the same value produces the same
   signature byte for byte on either host. `verifier-signing-parity-test`
   pins that with a fixed vector rather than trusting the sentence."
+  {:kotoba/export [generate-keypair sign sign-value signer-id trusted-signer-id! valid-key? valid-verification-key? validate-trust! verification-key verify verify-value]}
   (:require [clojure.set :as set]
             [kotoba.artifact.core :as artifact]
             [kotoba.verifier :as verifier])
