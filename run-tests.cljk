@@ -1,9 +1,9 @@
 (ns run-tests
   "The portable slice of the verifier on nbb -- the JDK-free compiler host.
 
-   nbb --classpath \"src:test:$(clojure -Spath -M:test)\" run-tests.cljk
+   kbb --backend sci --classpath \"src:test:$(kbb -Spath -M:test)\" run-tests.cljk
 
-   This repository had only `clojure -M:test` until 2026-09-02. A verifier
+   This repository had only `kbb -M:test` until 2026-09-02. A verifier
    whose whole job is to re-derive a rule independently was being exercised on
    one of the two hosts that run it, and the half that was never run refused
    every artifact using an i64 or i32 shift -- because a guest literal is a

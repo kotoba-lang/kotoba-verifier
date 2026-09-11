@@ -76,6 +76,6 @@ The kotoba-kir pin advances to `233bd6bb`, which is the commit that exports
 
 ## Evidence
 
-`clojure -M:test -n kotoba.verifier-test`: 77 tests, 528 assertions, 0 failures
+`kbb -M:test -n kotoba.verifier-test`: 77 tests, 528 assertions, 0 failures
 (run against a `:local/root` kotoba-kir before the pin landed, and against the
 pin after).

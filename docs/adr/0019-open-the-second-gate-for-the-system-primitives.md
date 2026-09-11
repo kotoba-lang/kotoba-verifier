@@ -54,7 +54,7 @@ someone else's red.
 
 ## Evidence
 
-`clojure -M:test`: 61 tests, 323 assertions, 0 failures.
+`kbb -M:test`: 61 tests, 323 assertions, 0 failures.
 
 Break shown: removing the six atomics from the memory family returns them to
 `runtime KIR operation rejected` -- which is what they got before this change,

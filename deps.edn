@@ -35,7 +35,7 @@
          ;; `kotoba.kir/native-float-boundary-types` across the repository
          ;; boundary -- deliberately, so the two admission sets cannot drift
          ;; silently -- and the pin was left one commit behind the var. The
-         ;; whole namespace failed to compile, so `clojure -M:test` stopped at
+         ;; whole namespace failed to compile, so `kbb -M:test` stopped at
          ;; the first file and reported ZERO tests rather than a failure.
          ;;
          ;; That is the shape this workspace's eighth question warns about

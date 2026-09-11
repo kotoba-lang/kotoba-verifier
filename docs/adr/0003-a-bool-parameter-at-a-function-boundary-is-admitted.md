@@ -247,4 +247,4 @@ above, not this one.
   verbatim above instead, as they were by the three previous agents to run them;
   (4) this repo has no loader of its own, so nothing here executes native code —
   the execution proof necessarily lives in a throwaway `compiler` worktree and
-  is not re-run by `clojure -M:test`.
+  is not re-run by `kbb -M:test`.
