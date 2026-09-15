@@ -86,6 +86,13 @@
         ;; with the exact producer.
         io.github.kotoba-lang/kotoba-native
         {:git/url "https://github.com/kotoba-lang/kotoba-native.git"
+         ;; ABI v5 (2026-09-15): `expected-context` names version 5 with
+         ;; `string-index-of` at 216, which kotoba-native emits from 9a98c3e
+         ;; (its ADR 0082). This pin stays where the note below leaves it,
+         ;; for the note's reason; in amu's closure the newest sha wins and
+         ;; the re-emission uses the v5 backend. At THIS pin a program that
+         ;; searches re-emits as the old rewrite -- only this repository's
+         ;; own suite runs here, and none of its fixtures search.
          ;;
          ;; NOT advanced 2026-09-08, and the reason is measured. This
          ;; verifier re-emits an artifact with the exact producer and compares

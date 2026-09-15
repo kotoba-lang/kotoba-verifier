@@ -2657,15 +2657,19 @@
                            :fuel fuel
                            :stack-bytes 4096}
           ;; Version 3 added the vector table (offsets 152-192); version 4
-          ;; adds `vector-alloc` at 200 and `vector-assoc-in-place` at 208.
-          ;; The bump is load-bearing in one direction only, and that is the
-          ;; dangerous one: a v3 host has no slots at 200-208, so code
-          ;; compiled against v4 that called them would jump through
-          ;; uninitialised memory. Every `checked_*` in the loader therefore
-          ;; refuses a context whose version is not exactly its own, and this
-          ;; map refuses an artifact that names any other ABI -- which is what
-          ;; makes the refusal explicit rather than a silent mismatch.
-          expected-context {:version 4 :fuel-offset 8 :allow-bitmap-offset 16
+          ;; added `vector-alloc` at 200 and `vector-assoc-in-place` at 208;
+          ;; version 5 (2026-09-15) adds `string-index-of` at 216 -- the byte
+          ;; search as a host slot, where until then it was a source rewrite
+          ;; costing one substring handle and three or four host calls per
+          ;; haystack byte (kotoba-native ADR 0082). The bump is load-bearing
+          ;; in one direction only, and that is the dangerous one: a v4 host
+          ;; has no slot at 216, so code compiled against v5 that called it
+          ;; would jump through uninitialised memory. Every `checked_*` in the
+          ;; loader therefore refuses a context whose version is not exactly
+          ;; its own, and this map refuses an artifact that names any other
+          ;; ABI -- which is what makes the refusal explicit rather than a
+          ;; silent mismatch.
+          expected-context {:version 5 :fuel-offset 8 :allow-bitmap-offset 16
                             :allow-bitmap-bytes 32 :cap-call-offset 48
                             :pair-new-offset 56 :pair-first-offset 64
                             :pair-second-offset 72 :pair-capacity 4096
@@ -2682,6 +2686,7 @@
                             :vector-assoc-offset 184 :vector-drop-offset 192
                             :vector-alloc-offset 200
                             :vector-assoc-in-place-offset 208
+                            :string-index-of-offset 216
                             ;; Two capacities, because a vector table entry and
                             ;; the elements it spans are separately exhaustible:
                             ;; many small vectors run out of entries first, one

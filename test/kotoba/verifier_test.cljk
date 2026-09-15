@@ -372,7 +372,7 @@
       :kir-sha256 (artifact/sha256 program)
       :lowering :runtime-sysv-v1
       :fuel-abi {:mode :hidden-context-r9 :initial fuel}
-      :context-abi {:version 4 :fuel-offset 8 :allow-bitmap-offset 16
+      :context-abi {:version 5 :fuel-offset 8 :allow-bitmap-offset 16
                     :allow-bitmap-bytes 32 :cap-call-offset 48
                     :pair-new-offset 56 :pair-first-offset 64
                     :pair-second-offset 72 :pair-capacity 4096
@@ -389,6 +389,7 @@
                     :vector-assoc-offset 184 :vector-drop-offset 192
                     :vector-alloc-offset 200
                     :vector-assoc-in-place-offset 208
+                    :string-index-of-offset 216
                     :vector-capacity 4096
                     :vector-item-capacity 65536}
       :effects (:effects program)
@@ -1456,7 +1457,7 @@
       :kir-sha256 (artifact/sha256 program)
       :lowering :runtime-sysv-v1
       :fuel-abi {:mode :hidden-context-r9 :initial fuel}
-      :context-abi {:version 4 :fuel-offset 8 :allow-bitmap-offset 16
+      :context-abi {:version 5 :fuel-offset 8 :allow-bitmap-offset 16
                     :allow-bitmap-bytes 32 :cap-call-offset 48
                     :pair-new-offset 56 :pair-first-offset 64
                     :pair-second-offset 72 :pair-capacity 4096
@@ -1473,6 +1474,7 @@
                     :vector-assoc-offset 184 :vector-drop-offset 192
                     :vector-alloc-offset 200
                     :vector-assoc-in-place-offset 208
+                    :string-index-of-offset 216
                     :vector-capacity 4096
                     :vector-item-capacity 65536}
       :effects (:effects program)
