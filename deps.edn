@@ -78,7 +78,7 @@
         ;; call cannot clobber) and the pin below is at kotoba-native main.
         io.github.kotoba-lang/kotoba-gmir
         {:git/url "https://github.com/kotoba-lang/kotoba-gmir.git"
-         :git/sha "d4e040b2978f4547e9698f3cc305176f49cac35e"}
+         :git/sha "966bb4ca8cd9fa48b1ee0d7cd30ccca711d91d92"}
         ;; Advanced 2026-09-02 from a2023fed (302 commits behind) now that the
         ;; `pinned-producer-*` blocker above is diagnosed and repaired. A pin
         ;; that cannot advance stops exercising every new operation through
@@ -93,6 +93,11 @@
          ;; the re-emission uses the v5 backend. At THIS pin a program that
          ;; searches re-emits as the old rewrite -- only this repository's
          ;; own suite runs here, and none of its fixtures search.
+         ;;
+         ;; ABI v6 (2026-09-16): `expected-context` names version 6 with the
+         ;; region reset pair at 224 / 232, which kotoba-native emits from
+         ;; d259b18 (its ADR 0083). Same stance as v5: the pin stays, the
+         ;; closure supplies the backend, no fixture here scopes.
          ;;
          ;; NOT advanced 2026-09-08, and the reason is measured. This
          ;; verifier re-emits an artifact with the exact producer and compares
