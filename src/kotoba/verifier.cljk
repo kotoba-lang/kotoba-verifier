@@ -361,6 +361,7 @@
   '{option-some 1 option-none 0 option-some? 1 option-value 2
     result-ok 1 result-err 1 result-ok? 1 result-value 2 result-error 2})
 
+
 ;; ── the floating-point arms, as data ─────────────────────────────────────
 ;;
 ;; These two arities-and-heads tables were literals inside `verify-expr!`.
@@ -389,6 +390,33 @@
     f32-unordered 2
     f32-to-f64-exact 1 f64-to-f32-rounded 1
     i64-to-f32-rounded 1 i64-to-f64-rounded 1})
+
+;; `(arena-scope body)` -- superproject ADR-2609160044, context ABI v6. On
+;; native every pair handle, pool byte, vector handle and vector item
+;; allocated while BODY runs is released afterwards. The whole safety
+;; argument is that no handle can leave the region, and this verifier
+;; re-derives it rather than trusting the frontend's typing: the body must
+;; be SCALAR-SHAPED -- a literal, a parameter or let-bound name of scalar
+;; type, a head whose value is always a plain word, a call whose declared
+;; result is scalar, or if / do / let / arena-scope over those. Anything
+;; else is refused by name (`region-body-not-scalar`), so a string-, vector-
+;; or record-valued body is caught here even if the frontend were wrong.
+(def ^:private region-operations '{arena-scope 1})
+(def ^:private region-scalar-types #{:i64 :bool :f64})
+(def ^:private region-scalar-operations
+  (into (set/union arithmetic comparisons i64-shifts
+                   (set (keys i64-operations)) (set (keys i32-operations))
+                   (set (keys f64-operations)) (set (keys f32-operations)))
+        '#{bit-not bool-not
+           string-byte-length string-code-point-at string-index-of string-contains?
+           string=? string-split-count
+           pair-first pair-second
+           kgraph-count kgraph-get kgraph-entity-at
+           vector-count vector-at
+           option-some? option-value result-ok? result-value result-error
+           cap-call}))
+(def ^:private region-body-not-scalar
+  "runtime KIR arena-scope body rejected: not scalar -- a handle would escape the region it is released with")
 
 (def ^:private native-clock-request-type
   [:variant :kotoba.clock/request [[:wall :bool] [:monotonic :bool]]])
@@ -1261,6 +1289,12 @@
             (reject! "runtime KIR string operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
+        (contains? region-operations op)
+        (do
+          (when-not (= (get region-operations op) (count args))
+            (reject! "runtime KIR region operation arity rejected" {:operation op}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
         (contains? tagged-i64-operations op)
         (do
           (when-not (= (get tagged-i64-operations op) (count args))
@@ -1919,6 +1953,63 @@
     (and (true? (:closure-result? function))
          (= :i64 (:result function)))))
 
+(defn- region-scalar-shaped?
+  "Is FORM scalar-shaped under ENV (name -> declared type)? Conservative:
+  anything not listed answers false, and the caller refuses."
+  [form env]
+  (cond
+    (or (guest-integer? form) (boolean? form) (float? form)) true
+    (symbol? form) (contains? region-scalar-types (get env form))
+    (seq? form)
+    (let [[op & args] form]
+      (cond
+        (and (= op 'let) (= 2 (count args)) (vector? (first args)))
+        (let [env (reduce (fn [env [binding value]]
+                            (assoc env binding
+                                   (if (region-scalar-shaped? value env) :i64 :other)))
+                          env (partition 2 (first args)))]
+          (region-scalar-shaped? (second args) env))
+        (and (= op 'if) (= 3 (count args)))
+        (and (region-scalar-shaped? (second args) env)
+             (region-scalar-shaped? (nth args 2) env))
+        (and (= op 'do) (seq args))
+        (region-scalar-shaped? (last args) env)
+        (and (= op 'arena-scope) (= 1 (count args)))
+        (region-scalar-shaped? (first args) env)
+        (and (= op 'typed-cap-call) (= 4 (count args)))
+        (= :i64 (nth args 2))
+        (contains? region-scalar-operations op) true
+        (contains? *call-results* op)
+        (contains? region-scalar-types (get *call-results* op))
+        :else false))
+    :else false))
+
+(defn- verify-arena-scopes!
+  "Every `(arena-scope body)` in FUNCTION has a scalar-shaped body. Parameters
+  carry their declared `:param-types`; a module without them has no scalar
+  parameter at all, which is the conservative reading."
+  [function]
+  (let [env (zipmap (:params function)
+                    (or (:param-types function) (repeat :unknown)))]
+    (letfn [(walk [form env]
+              (when (seq? form)
+                (let [[op & args] form]
+                  (cond
+                    (and (= op 'arena-scope) (= 1 (count args)))
+                    (do (when-not (region-scalar-shaped? (first args) env)
+                          (reject! region-body-not-scalar
+                                   {:function (:name function) :body (first args)}))
+                        (walk (first args) env))
+                    (and (= op 'let) (= 2 (count args)) (vector? (first args)))
+                    (let [env (reduce (fn [env [binding value]]
+                                        (walk value env)
+                                        (assoc env binding
+                                               (if (region-scalar-shaped? value env) :i64 :other)))
+                                      env (partition 2 (first args)))]
+                      (walk (second args) env))
+                    :else (doseq [a args] (walk a env))))))]
+      (walk (:body function) env))))
+
 (defn- verify-program! [program]
   (doseq [[label check] module-shape-checks]
     ;; A hostile program can fail an early check in a way that makes a later
@@ -2023,6 +2114,7 @@
                          ;; plain word has no schema to carry.
                          (verify-expr! (:body function) (aggregate-param-locals function)
                                        signatures 0 nodes facts)
+                         (verify-arena-scopes! function)
                          [(:name function) @facts])))
                 functions)
           inferred (infer-effects direct)
@@ -2661,7 +2753,9 @@
           ;; version 5 (2026-09-15) adds `string-index-of` at 216 -- the byte
           ;; search as a host slot, where until then it was a source rewrite
           ;; costing one substring handle and three or four host calls per
-          ;; haystack byte (kotoba-native ADR 0082). The bump is load-bearing
+          ;; haystack byte (kotoba-native ADR 0082); version 6 (2026-09-16)
+          ;; adds `arena-enter` / `arena-leave` at 224 / 232, the region reset
+          ;; behind `arena-scope` (ADR-2609160044). The bump is load-bearing
           ;; in one direction only, and that is the dangerous one: a v4 host
           ;; has no slot at 216, so code compiled against v5 that called it
           ;; would jump through uninitialised memory. Every `checked_*` in the
@@ -2669,7 +2763,7 @@
           ;; its own, and this map refuses an artifact that names any other
           ;; ABI -- which is what makes the refusal explicit rather than a
           ;; silent mismatch.
-          expected-context {:version 5 :fuel-offset 8 :allow-bitmap-offset 16
+          expected-context {:version 6 :fuel-offset 8 :allow-bitmap-offset 16
                             :allow-bitmap-bytes 32 :cap-call-offset 48
                             :pair-new-offset 56 :pair-first-offset 64
                             :pair-second-offset 72 :pair-capacity 4096
@@ -2687,6 +2781,9 @@
                             :vector-alloc-offset 200
                             :vector-assoc-in-place-offset 208
                             :string-index-of-offset 216
+                            ;; Version 6 (2026-09-16, superproject
+                            ;; ADR-2609160044): the region reset pair.
+                            :arena-enter-offset 224 :arena-leave-offset 232
                             ;; Two capacities, because a vector table entry and
                             ;; the elements it spans are separately exhaustible:
                             ;; many small vectors run out of entries first, one
