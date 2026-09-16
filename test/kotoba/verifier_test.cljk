@@ -372,7 +372,7 @@
       :kir-sha256 (artifact/sha256 program)
       :lowering :runtime-sysv-v1
       :fuel-abi {:mode :hidden-context-r9 :initial fuel}
-      :context-abi {:version 6 :fuel-offset 8 :allow-bitmap-offset 16
+      :context-abi {:version 7 :fuel-offset 8 :allow-bitmap-offset 16
                     :allow-bitmap-bytes 32 :cap-call-offset 48
                     :pair-new-offset 56 :pair-first-offset 64
                     :pair-second-offset 72 :pair-capacity 4096
@@ -391,6 +391,8 @@
                     :vector-assoc-in-place-offset 208
                     :string-index-of-offset 216
                     :arena-enter-offset 224 :arena-leave-offset 232
+                    :string-compare-offset 240 :string-fold-ascii-offset 248
+                    :string-find-blank-offset 256 :string-skip-blank-offset 264
                     :vector-capacity 4096
                     :vector-item-capacity 65536}
       :effects (:effects program)
@@ -1458,7 +1460,7 @@
       :kir-sha256 (artifact/sha256 program)
       :lowering :runtime-sysv-v1
       :fuel-abi {:mode :hidden-context-r9 :initial fuel}
-      :context-abi {:version 6 :fuel-offset 8 :allow-bitmap-offset 16
+      :context-abi {:version 7 :fuel-offset 8 :allow-bitmap-offset 16
                     :allow-bitmap-bytes 32 :cap-call-offset 48
                     :pair-new-offset 56 :pair-first-offset 64
                     :pair-second-offset 72 :pair-capacity 4096
@@ -1477,6 +1479,8 @@
                     :vector-assoc-in-place-offset 208
                     :string-index-of-offset 216
                     :arena-enter-offset 224 :arena-leave-offset 232
+                    :string-compare-offset 240 :string-fold-ascii-offset 248
+                    :string-find-blank-offset 256 :string-skip-blank-offset 264
                     :vector-capacity 4096
                     :vector-item-capacity 65536}
       :effects (:effects program)
