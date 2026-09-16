@@ -519,7 +519,13 @@
     vector-alloc 1 vector-assoc! 3})
 ;; `vector-new` is the one variadic operation in either family: its arity IS
 ;; the literal's element count. Independently re-derived from
-;; `kotoba.kir.value/vector-item-limit`, like every other bound in this file.
+;; `kotoba.kir.value/vector-item-limit`, like every other bound in this file
+;; -- until 2026-09-16, when that limit moved to 2^24 (osaho #93, a vector's
+;; RUNTIME length, bounded again by each host's arena budget) and this one
+;; deliberately did not: a literal's element count is a CODE SIZE bound (the
+;; native lowering expands one host call per element), and 16,384 host calls
+;; is where it stays. A longer vector is built at run time with
+;; `vector-alloc` and stores, never spelled.
 (def ^:private vector-constructors '#{vector-new vector-f64-new})
 (def ^:private max-vector-literal-items 16384)
 (def ^:private string-index-operations
