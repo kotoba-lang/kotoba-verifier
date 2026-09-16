@@ -356,6 +356,8 @@
 (def ^:private string-operations
   '{string-byte-length 1 string=? 2 string-concat 2 string-substring 3 string-code-point-at 2
     string-contains? 2 string-index-of 2 string-replace-all 3
+    ;; ABI v7 text heads (2026-09-16): host slots 240 / 248 / 256 / 264.
+    string-compare 2 string-fold-ascii 1 string-find-blank 2 string-skip-blank 2
     keyword-name 1 keyword-from-string 1})
 (def ^:private tagged-i64-operations
   '{option-some 1 option-none 0 option-some? 1 option-value 2
@@ -410,6 +412,7 @@
         '#{bit-not bool-not
            string-byte-length string-code-point-at string-index-of string-contains?
            string=? string-split-count
+           string-compare string-find-blank string-skip-blank
            pair-first pair-second
            kgraph-count kgraph-get kgraph-entity-at
            vector-count vector-at
@@ -2755,7 +2758,8 @@
           ;; costing one substring handle and three or four host calls per
           ;; haystack byte (kotoba-native ADR 0082); version 6 (2026-09-16)
           ;; adds `arena-enter` / `arena-leave` at 224 / 232, the region reset
-          ;; behind `arena-scope` (ADR-2609160044). The bump is load-bearing
+          ;; behind `arena-scope` (ADR-2609160044); version 7 (2026-09-16)
+          ;; adds the four text slots at 240-264. The bump is load-bearing
           ;; in one direction only, and that is the dangerous one: a v4 host
           ;; has no slot at 216, so code compiled against v5 that called it
           ;; would jump through uninitialised memory. Every `checked_*` in the
@@ -2763,7 +2767,7 @@
           ;; its own, and this map refuses an artifact that names any other
           ;; ABI -- which is what makes the refusal explicit rather than a
           ;; silent mismatch.
-          expected-context {:version 6 :fuel-offset 8 :allow-bitmap-offset 16
+          expected-context {:version 7 :fuel-offset 8 :allow-bitmap-offset 16
                             :allow-bitmap-bytes 32 :cap-call-offset 48
                             :pair-new-offset 56 :pair-first-offset 64
                             :pair-second-offset 72 :pair-capacity 4096
@@ -2784,6 +2788,9 @@
                             ;; Version 6 (2026-09-16, superproject
                             ;; ADR-2609160044): the region reset pair.
                             :arena-enter-offset 224 :arena-leave-offset 232
+                            ;; Version 7 (2026-09-16): the four text slots.
+                            :string-compare-offset 240 :string-fold-ascii-offset 248
+                            :string-find-blank-offset 256 :string-skip-blank-offset 264
                             ;; Two capacities, because a vector table entry and
                             ;; the elements it spans are separately exhaustible:
                             ;; many small vectors run out of entries first, one
