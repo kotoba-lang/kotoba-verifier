@@ -360,6 +360,8 @@
     string-compare 2 string-fold-ascii 1 string-find-blank 2 string-skip-blank 2
     ;; ABI v8 line heads (2026-09-16): host slots 272 / 280.
     string-index-of-from 3 string-compare-lines 4
+    ;; ABI v10 range heads (2026-09-16): host slots 336 / 344.
+    string-find-byte 3 string-append-range 4
     keyword-name 1 keyword-from-string 1})
 (def ^:private tagged-i64-operations
   '{option-some 1 option-none 0 option-some? 1 option-value 2
@@ -415,7 +417,7 @@
            string-byte-length string-code-point-at string-index-of string-contains?
            string=? string-split-count
            string-compare string-find-blank string-skip-blank
-           string-index-of-from string-compare-lines
+           string-index-of-from string-compare-lines string-find-byte
            pair-first pair-second
            kgraph-count kgraph-get kgraph-entity-at
            vector-count vector-at
@@ -2772,7 +2774,8 @@
           ;; two line slots at 272 / 280; version 9 (2026-09-16, kotoba-native
           ;; ADR 0084) six DATA pointers at 288-328 that inline handle
           ;; operations read -- a v8 loader has nothing there, which is what
-          ;; makes the bump necessary. The bump is load-bearing
+          ;; makes the bump necessary; version 10 (2026-09-16) the two range
+          ;; slots at 336 / 344. The bump is load-bearing
           ;; in one direction only, and that is the dangerous one: a v4 host
           ;; has no slot at 216, so code compiled against v5 that called it
           ;; would jump through uninitialised memory. Every `checked_*` in the
@@ -2780,7 +2783,7 @@
           ;; its own, and this map refuses an artifact that names any other
           ;; ABI -- which is what makes the refusal explicit rather than a
           ;; silent mismatch.
-          expected-context {:version 9 :fuel-offset 8 :allow-bitmap-offset 16
+          expected-context {:version 10 :fuel-offset 8 :allow-bitmap-offset 16
                             :allow-bitmap-bytes 32 :cap-call-offset 48
                             :pair-new-offset 56 :pair-first-offset 64
                             :pair-second-offset 72 :pair-capacity 4096
@@ -2812,6 +2815,8 @@
                             :pair-validated-base-offset 304
                             :vector-used-pointer-offset 312 :vectors-base-offset 320
                             :vector-items-base-offset 328
+                            ;; Version 10 (2026-09-16): the two range slots.
+                            :string-find-byte-offset 336 :string-append-range-offset 344
                             ;; Two capacities, because a vector table entry and
                             ;; the elements it spans are separately exhaustible:
                             ;; many small vectors run out of entries first, one
