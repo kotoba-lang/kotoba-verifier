@@ -268,7 +268,7 @@
 (def max-lowered-nodes 100000)
 (def ^:private max-depth 256)
 (def ^:private max-bindings 4096)
-(def ^:private max-parameters 5)
+(def ^:private max-parameters 64)
 (def ^:private max-symbol-chars 128)
 ;; Independently re-derived from `kotoba.compiler.frontend/arithmetic` ON
 ;; PURPOSE -- this verifier must not import the producer's own sets, or it

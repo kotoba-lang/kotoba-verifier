@@ -78,7 +78,7 @@
         ;; call cannot clobber) and the pin below is at kotoba-native main.
         io.github.kotoba-lang/kotoba-gmir
         {:git/url "https://github.com/kotoba-lang/kotoba-gmir.git"
-         :git/sha "3350ad20a436c1270fc9a693dfea910f68ca9e08"}
+         :git/sha "cf39f7c1a239666b5e0e3ac82c27bdeb6add0807"}
         ;; Advanced 2026-09-02 from a2023fed (302 commits behind) now that the
         ;; `pinned-producer-*` blocker above is diagnosed and repaired. A pin
         ;; that cannot advance stops exercising every new operation through
@@ -121,7 +121,7 @@
          ;;
          ;; Both pins are also behind kotoba-native main (155e82ce): this one
          ;; by 34, amu's by 2.
-         :git/sha "adeb1b0fa5bcd2dd18a657c7e3bd3c4acbd630ae"}
+         :git/sha "85a068ac9a09655af3b03df02a07025ec742e55c"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}
