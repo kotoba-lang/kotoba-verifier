@@ -5,7 +5,7 @@
   conservatively, so that a string-, vector- or record-valued body is refused
   here by name even if the frontend were wrong. Both directions, with the
   reason literal pinned."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.verifier]))
 
 (defn- program

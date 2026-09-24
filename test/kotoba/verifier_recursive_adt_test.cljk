@@ -3,7 +3,7 @@
   vector holding its children, and a recursive schema table carried by the
   program. Each is re-derived here without calling the producer. Both
   directions, with the refusal literal pinned."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.verifier]))
 
 (def ^:private node

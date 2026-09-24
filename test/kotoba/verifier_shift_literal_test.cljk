@@ -22,7 +22,7 @@
   What is pinned is the whole rule, not just the half that was broken: counts
   in range are admitted, and a non-literal or out-of-range count is still
   refused, with the same reason literal, on both hosts."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.verifier]))
 
 (defn- guest-int

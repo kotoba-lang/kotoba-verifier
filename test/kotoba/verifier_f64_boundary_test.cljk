@@ -7,7 +7,7 @@
   after every other layer already accepted the program. That exact split cost
   a day on 2026-09-02 when the f32 arm was missing here while kir admitted it,
   and neither gate found it -- someone compiling something did."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.kir :as kir]
             [kotoba.verifier :as verifier]))
 
