@@ -233,6 +233,12 @@
   #{:format :target :target-profile :value :kir-sha256 :lowering :fuel-abi :context-abi
     :effects :limits :code :program :exports :compatibility :sha256})
 
+;; P4 of superproject adr-2609242100 (section 4): an artifact whose
+;; compile-time oracle ran out of a resource carries `:oracle {:status
+;; :inconclusive :trap <budget trap> :fuel <oracle budget>}` and seals no
+;; value. It is the only optional field, and it is present only then.
+(def ^:private inconclusive-artifact-fields (conj artifact-fields :oracle))
+
 ;; fuel64: 2^20 was never a decision about how much work a native program may
 ;; do. It is what this file has always said, and what
 ;; `kotoba.compiler.nbb.cli/native-fuel!` says beside it, and the reason it
@@ -2967,12 +2973,20 @@
           _ (when-not (admitted-native-fuel? fuel)
               (reject! "native fuel budget is not admitted"
                        {:target target :fuel fuel :maximum max-native-fuel}))
+          ;; P4 of adr-2609242100: an UNMETERED artifact (the native profile's
+          ;; default) says `:fuel-metering :off`; its `:fuel` is then the
+          ;; oracle's budget and its counter starts at the ceiling, where no
+          ;; run reaches zero. A metered artifact is shaped as before, with
+          ;; `:fuel-abi :initial` = `:limits :fuel`.
+          unmetered? (= :off (:fuel-metering limits))
+          initial (if unmetered? max-native-fuel fuel)
           expected-fuel-abi (case backend
-                              :x86_64-kotoba-v1 {:mode :hidden-context-r9 :initial fuel}
-                              :aarch64-kotoba-v1 {:mode :hidden-context-x7 :initial fuel})
-          expected-limits {:memory-bytes 65536
-                           :fuel fuel
-                           :stack-bytes 4096}
+                              :x86_64-kotoba-v1 {:mode :hidden-context-r9 :initial initial}
+                              :aarch64-kotoba-v1 {:mode :hidden-context-x7 :initial initial})
+          expected-limits (cond-> {:memory-bytes 65536
+                                   :fuel fuel
+                                   :stack-bytes 4096}
+                            unmetered? (assoc :fuel-metering :off))
           ;; Version 3 added the vector table (offsets 152-192); version 4
           ;; added `vector-alloc` at 200 and `vector-assoc-in-place` at 208;
           ;; version 5 (2026-09-15) adds `string-index-of` at 216 -- the byte
@@ -3043,8 +3057,17 @@
                  {:target target :context-abi context-abi})))))
 
 (defn verify-artifact! [{:keys [format target target-profile code effects kir-sha256 compatibility] :as kexe}]
-  (when-not (and (map? kexe) (= artifact-fields (set (keys kexe))))
+  (when-not (and (map? kexe) (contains? #{artifact-fields inconclusive-artifact-fields}
+                                         (set (keys kexe))))
     (reject! "native artifact schema rejected" {}))
+  (when (contains? kexe :oracle)
+    (let [{:keys [status trap fuel] :as oracle} (:oracle kexe)]
+      (when-not (and (map? oracle) (= #{:status :trap :fuel} (set (keys oracle)))
+                     (= :inconclusive status)
+                     (or (contains? ir/budget-traps trap) (= :host/stack-exhausted trap))
+                     (guest= fuel (get-in kexe [:limits :fuel]))
+                     (nil? (:value kexe)))
+        (reject! "native artifact oracle marker rejected" {:oracle oracle}))))
   (when-not (= :kotoba.kexe/v1 format) (reject! "unknown artifact format" {}))
   (when-not (and (string? kir-sha256) (re-matches #"[0-9a-f]{64}" kir-sha256))
     (reject! "missing or malformed KIR identity" {}))
@@ -3102,6 +3125,7 @@
         (when (and (empty? effects) (not kernel-native?)
                    (some? (get-in kexe [:program :entry])))
           (try
+           (try
             (ir/execute (:program kexe) (get-in kexe [:program :entry]) []
                         ;; A plain number, which is what `ir/execute` documents
                         ;; its fuel to be: "interpreter-internal config, never
@@ -3129,8 +3153,29 @@
                                   :cljs (js/Number (get-in kexe [:limits :fuel]))
                                   :default (js/Number (get-in kexe [:limits :fuel])))})
             (catch #?(:clj Exception :cljs :default) error
-              (reject! "native artifact oracle evaluation rejected"
-                       {:cause (ex-message error)}))))]
-    (when-not (guest-value= expected-value (:value kexe))
+              ;; adr-2609242100 section 4: a RESOURCE trap in the oracle is
+              ;; "oracle inconclusive" -- named, and distinct from a mismatch
+              ;; (the value check below) and from a pass. It is accepted only
+              ;; for an artifact that says so (`:oracle :inconclusive`, no
+              ;; sealed value); one that sealed a value this run cannot
+              ;; re-derive is refused under the inconclusive name.
+              (if-let [trap (ir/oracle-inconclusive-trap error)]
+                (if (= :inconclusive (get-in kexe [:oracle :status]))
+                  ::inconclusive
+                  (reject! "native artifact oracle inconclusive: the sealed value cannot be re-derived"
+                           {:trap trap :fuel (get-in kexe [:limits :fuel])}))
+                (throw error))))
+            (catch #?(:clj Exception :cljs :default) error
+              (if (= "native artifact oracle inconclusive: the sealed value cannot be re-derived"
+                     (ex-message error))
+                (throw error)
+                (reject! "native artifact oracle evaluation rejected"
+                         {:cause (ex-message error)})))))]
+    (cond
+      (= ::inconclusive expected-value) nil
+      (= :inconclusive (get-in kexe [:oracle :status]))
+      (reject! "native artifact oracle marker rejected: the oracle answered"
+               {:value expected-value})
+      (not (guest-value= expected-value (:value kexe)))
       (reject! "native artifact oracle value rejected" {})))
   kexe)
