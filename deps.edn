@@ -54,7 +54,11 @@
          ;; That is the shape this workspace's eighth question warns about
          ;; from the other side: a suite that cannot run does not look like a
          ;; suite that ran. The fix is the pin, not the test.
-         :git/sha "74426bad2fa7c8b674c9bc9469232f1b751fbf9c"}
+         ;; Advanced 2026-09-24, 74426bad -> f305bb00 (osaho main, ahead 60,
+         ;; behind 0, forward only): verify-artifact! now calls
+         ;; kotoba.kir/oracle-inconclusive-trap and budget-traps, which exist
+         ;; from adr-2609242100 P4 on.
+         :git/sha "f305bb00589768bfa9e1eb5fb1e9cd9aab0ce949"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
          :git/sha "ba29522ece748d2f7ff420d2ba45b1126c94baf8"}
