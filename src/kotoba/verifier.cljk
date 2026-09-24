@@ -538,7 +538,13 @@
 (def ^:private xml-operations
   '{xml-path-count 2 xml-name-count 2 xml-name-text 3 xml-path-text 3 xml-path-attr 4})
 (def ^:private decimal-operations '{decimal-f64-parse 1 decimal-f64x3-parse 1})
-(def ^:private string-literal-byte-limit 4096)
+;; kotoba-lang lang/limits.edn :language/static :string-literal-bytes. 4096
+;; here until 2026-09-24 while osaho's `string-literal-byte-limit` (the
+;; frontend's) had been 65536 since 2026-09-11: a program the compiler
+;; admitted, this verifier refused. Still re-derived here rather than read,
+;; so a producer cannot ratify itself; amu value_bounds_agreement_test is
+;; what keeps the two equal (adr-2609242100 P1).
+(def ^:private string-literal-byte-limit 65536)
 (def ^:private max-record-fields 32)
 (def ^:private max-record-nesting-depth 32)
 
