@@ -372,7 +372,7 @@
       :kir-sha256 (artifact/sha256 program)
       :lowering :runtime-sysv-v1
       :fuel-abi {:mode :hidden-context-r9 :initial fuel}
-      :context-abi {:version 10 :fuel-offset 8 :allow-bitmap-offset 16
+      :context-abi {:version 11 :fuel-offset 8 :allow-bitmap-offset 16
                     :allow-bitmap-bytes 32 :cap-call-offset 48
                     :pair-new-offset 56 :pair-first-offset 64
                     :pair-second-offset 72 :pair-capacity 4096
@@ -399,6 +399,8 @@
                     :vector-used-pointer-offset 312 :vectors-base-offset 320
                     :vector-items-base-offset 328
                     :string-find-byte-offset 336 :string-append-range-offset 344
+                    :string-from-utf8-offset 352 :bytes-from-vector-offset 360
+                    :bytes-slice-offset 368 :bytes-concat-offset 376
                     :vector-capacity 4096
                     :vector-item-capacity 65536}
       :effects (:effects program)
@@ -1468,7 +1470,7 @@
       :kir-sha256 (artifact/sha256 program)
       :lowering :runtime-sysv-v1
       :fuel-abi {:mode :hidden-context-r9 :initial fuel}
-      :context-abi {:version 10 :fuel-offset 8 :allow-bitmap-offset 16
+      :context-abi {:version 11 :fuel-offset 8 :allow-bitmap-offset 16
                     :allow-bitmap-bytes 32 :cap-call-offset 48
                     :pair-new-offset 56 :pair-first-offset 64
                     :pair-second-offset 72 :pair-capacity 4096
@@ -1495,6 +1497,8 @@
                     :vector-used-pointer-offset 312 :vectors-base-offset 320
                     :vector-items-base-offset 328
                     :string-find-byte-offset 336 :string-append-range-offset 344
+                    :string-from-utf8-offset 352 :bytes-from-vector-offset 360
+                    :bytes-slice-offset 368 :bytes-concat-offset 376
                     :vector-capacity 4096
                     :vector-item-capacity 65536}
       :effects (:effects program)

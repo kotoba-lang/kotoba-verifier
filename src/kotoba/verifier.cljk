@@ -426,7 +426,7 @@
            string-index-of-from string-compare-lines string-find-byte
            pair-first pair-second
            kgraph-count kgraph-get kgraph-entity-at
-           vector-count vector-at
+           vector-count vector-at bytes-count bytes-at
            option-some? option-value result-ok? result-value result-error
            cap-call}))
 (def ^:private region-body-not-scalar
@@ -525,6 +525,18 @@
     ;; bang a different operation. Neither has an f64 twin, because KIR
     ;; declares none.
     vector-alloc 1 vector-assoc! 3})
+
+;; `:bytes` (2026-09-25, superproject adr-2609242330, context ABI v11). The
+;; language's byte string, admitted with its KIR arities on the same stance as
+;; the two tables above: these are target-independent operations
+;; (`kotoba.kir/execute` runs every one) and the arities are re-derived from
+;; the KIR contract, not imported. On native a bytes value is a vector-arena
+;; handle, so the three reads and the empty value lower to vector slots and the
+;; other four to the v11 slots 352-376; that is the emitter's business, and this
+;; table does not restate it.
+(def ^:private bytes-operations
+  '{bytes-empty 0 bytes-count 1 bytes-at 2 bytes-slice 3 bytes-concat 2
+    bytes-from-vector-i64 1 vector-i64-from-bytes 1 string-from-utf8 1})
 ;; `vector-new` is the one variadic operation in either family: its arity IS
 ;; the literal's element count. Independently re-derived from
 ;; `kotoba.kir.value/vector-item-limit`, like every other bound in this file
@@ -1503,6 +1515,12 @@
             (reject! "runtime KIR vector operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
+        (contains? bytes-operations op)
+        (do
+          (when-not (= (get bytes-operations op) (count args))
+            (reject! "runtime KIR bytes operation arity rejected" {:operation op}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
         (contains? vector-constructors op)
         (do
           (when (> (count args) max-vector-literal-items)
@@ -2018,7 +2036,8 @@
   ;; The native context owns these handles. Machine code can forward one
   ;; between private functions as a single word, but the public kexe ABI has
   ;; no operation for a host to construct, validate, inspect, or release one.
-  (contains? #{:vector-i64 :vector-f64 :string-index} type))
+  ;; `:bytes` joined 2026-09-25 (context ABI v11): a vector-arena handle too.
+  (contains? #{:vector-i64 :vector-f64 :string-index :bytes} type))
 
 ;; slice-value: a type kotoba-sema's SOURCE syntax admits and erases before HIR
 ;; (kotoba-sema ADR 0009). `[:slice T]` is a base AND a length -- two machine
@@ -3021,7 +3040,7 @@
           ;; its own, and this map refuses an artifact that names any other
           ;; ABI -- which is what makes the refusal explicit rather than a
           ;; silent mismatch.
-          expected-context {:version 10 :fuel-offset 8 :allow-bitmap-offset 16
+          expected-context {:version 11 :fuel-offset 8 :allow-bitmap-offset 16
                             :allow-bitmap-bytes 32 :cap-call-offset 48
                             :pair-new-offset 56 :pair-first-offset 64
                             :pair-second-offset 72 :pair-capacity 4096
@@ -3055,6 +3074,11 @@
                             :vector-items-base-offset 328
                             ;; Version 10 (2026-09-16): the two range slots.
                             :string-find-byte-offset 336 :string-append-range-offset 344
+                            ;; Version 11 (2026-09-25, superproject
+                            ;; adr-2609242330): the string constructor and the
+                            ;; three bytes slots.
+                            :string-from-utf8-offset 352 :bytes-from-vector-offset 360
+                            :bytes-slice-offset 368 :bytes-concat-offset 376
                             ;; Two capacities, because a vector table entry and
                             ;; the elements it spans are separately exhaustible:
                             ;; many small vectors run out of entries first, one
