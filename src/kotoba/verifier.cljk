@@ -781,10 +781,18 @@
 
 ;; A cap-id straight from a KIR effect is a guest literal -- a cljs `bigint`
 ;; under nbb -- so it takes `guest-integer?`, not bare `integer?`.
+;; `:state` is the pure ability state (kotoba-lang `lang/state-ability.edn`,
+;; slice 1): a TYPE a handler specialization carries, lowered by the frontend to
+;; state passing, naming no host authority. It is not re-derivable from the
+;; lowered body -- there is no operation left to see -- so the checks below
+;; re-derive the capability part of each row and admit `:state` beside it.
+(def ^:private pure-ability-effects #{:state})
+
 (defn- valid-effect? [effect]
-  (and (vector? effect) (= 2 (count effect)) (= :cap/call (first effect))
-       (guest-integer? (second effect))
-       (<= 0 (second effect) 255)))
+  (or (contains? pure-ability-effects effect)
+      (and (vector? effect) (= 2 (count effect)) (= :cap/call (first effect))
+           (guest-integer? (second effect))
+           (<= 0 (second effect) 255))))
 
 (defn- bounded-sum [values]
   (reduce (fn [total value] (min (inc max-lowered-nodes) (+ total value)))
@@ -2350,9 +2358,14 @@
                 functions)
           inferred (infer-effects direct)
           declared (into {} (map (juxt :name :effects) functions))
-          total (reduce set/union #{} (vals inferred))
+          ;; the capability part is re-derived; a declared pure ability is
+          ;; carried over, and it reaches the module row like any member
+          declared-capabilities (into {} (map (fn [[n e]] [n (set/difference e pure-ability-effects)]))
+                                      declared)
+          pure-abilities (into #{} (mapcat #(filter pure-ability-effects %)) (vals declared))
+          total (into (reduce set/union #{} (vals inferred)) pure-abilities)
           cost (bounded-sum (map #(lowered-cost (:body %) {}) functions))]
-      (when-not (= inferred declared)
+      (when-not (= inferred declared-capabilities)
         (reject! "runtime KIR function effects rejected" {}))
       (when-not (= total (:effects program))
         (reject! "runtime KIR module effects rejected" {}))
@@ -3073,10 +3086,18 @@
     (reject! "missing or malformed KIR identity" {}))
   (when-not (guest= effects (get-in kexe [:program :effects]))
     (reject! "artifact effects do not match runtime KIR" {}))
-  (when-not (every? #(and (vector? %) (= :cap/call (first %))
-                          (= 2 (count %))
-                          (guest-integer? (second %))
-                          (<= 0 (second %) 255)) effects)
+  ;; `:state` is the one keyword admitted beside the capability calls. It is
+  ;; the PURE ability state (kotoba-lang `lang/state-ability.edn`, slice 1):
+  ;; the frontend lowered it to state passing -- plain calls, let and records,
+  ;; which the rest of this verifier re-checks as it checks any program -- and
+  ;; its handler is code inside this artifact. It names no host authority, so
+  ;; there is nothing for the capability bitmap to carry. `:abort` stays
+  ;; refused here: its native qualification has not been measured.
+  (when-not (every? #(or (= :state %)
+                         (and (vector? %) (= :cap/call (first %))
+                              (= 2 (count %))
+                              (guest-integer? (second %))
+                              (<= 0 (second %) 255))) effects)
     (reject! "native artifact contains an unsupported effect" {:effects effects}))
   ;; `guest-integer?`, not `integer?`: a byte read back out of an artifact is
   ;; a JavaScript bigint on the cljs host, for which `integer?` is false. This
@@ -3122,7 +3143,9 @@
         ;; correspondingly seals no value for one, so there is nothing to
         ;; re-derive -- the check below then compares nil to nil, which is the
         ;; honest result rather than a skipped assertion.
-        (when (and (empty? effects) (not kernel-native?)
+        ;; A pure ability (`:state`) is no host effect: its handler is code in
+        ;; this artifact, so the entry is as re-executable as a pure one.
+        (when (and (every? pure-ability-effects effects) (not kernel-native?)
                    (some? (get-in kexe [:program :entry])))
           (try
            (try

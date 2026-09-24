@@ -169,3 +169,42 @@
   ;; a permanent red in it stops being read, and this one carries the only
   ;; native artifact either host verifies.
   (is (map? (verifier/verify-artifact! (fixture)))))
+
+;; ---------------------------------------------------------------------------
+;; The state ability (kotoba-lang lang/state-ability.edn, slice 1)
+
+(defn- state-fixture []
+  ;; lang/conformance/state/counter.kotoba compiled to aarch64-macos by amu
+  ;; with kotoba-sema at the state-ability commit. Its module row is
+  ;; #{:state}: `tick`'s specialization performs the pure ability, `main`
+  ;; installs the handler. Measured on the loader: main answers 42.
+  (read-fixture "aarch64-state-counter.kexe"))
+
+(deftest a-state-row-is-verified-not-refused-by-name
+  (let [artifact (state-fixture)]
+    (is (= #{:state} (set (:effects artifact))) "the fixture carries the pure ability")
+    (let [{:keys [decision message value]} (outcome artifact)]
+      (is (= :admitted decision) (str decision ": " message))
+      (is (map? value)))))
+
+(deftest a-state-row-is-still-checked
+  (testing "a keyword that is not a pure ability is refused before anything else"
+    (let [misspelt (-> (state-fixture)
+                       (assoc :effects #{:states})
+                       (assoc-in [:program :effects] #{:states}))]
+      (is (= "native artifact contains an unsupported effect"
+             (:message (outcome misspelt))))))
+  (testing "the tracked control effect :abort is NOT admitted by the same door"
+    (let [aborting (-> (state-fixture)
+                       (assoc :effects #{:abort})
+                       (assoc-in [:program :effects] #{:abort}))]
+      (is (= "native artifact contains an unsupported effect"
+             (:message (outcome aborting))))))
+  (testing "a function row that claims :state its body cannot show is still a
+            function row the verifier re-derives: dropping :state from the
+            module row alone is a module-row mismatch"
+    (let [artifact (state-fixture)
+          stripped (-> artifact
+                       (assoc :effects #{})
+                       (assoc-in [:program :effects] #{}))]
+      (is (= :refused (:decision (outcome stripped)))))))
