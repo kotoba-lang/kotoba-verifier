@@ -636,6 +636,127 @@
                                 (native-word-value-type? (nth type 2) (inc depth)))
                    false))))))
 
+;; ── recursive / generic aggregate handles (aggregate ABI v8) ─────────────
+;;
+;; Independently re-derived from `kotoba.kir/native-handle-type?` and
+;; kotoba-native's `payload-word-type?`, for the reason every predicate in this
+;; file is: a verifier that called the code it checks would check nothing.
+;; A record, a variant and a heterogeneous vector are each ONE word on native
+;; (a pair chain / pair(ordinal,payload) / pair chain), so a member is
+;; admissible exactly when it is itself one word -- including `[:ref q]`,
+;; which is how a type names itself. No schema table reaches this verifier; a
+;; qualified `:ref` is admitted structurally, as `native-boundary-type?` below
+;; already admits it at a signature.
+(def ^:private max-handle-members 32)
+(def ^:private max-handle-depth 32)
+
+(declare native-handle-type?)
+
+(defn- native-handle-members? [members depth]
+  (and (vector? members) (<= 1 (count members) max-handle-members)
+       (every? #(and (vector? %) (= 2 (count %)) (keyword? (first %))
+                     (native-handle-type? (second %) (inc depth)))
+               members)
+       (= (count members) (count (distinct (map first members))))))
+
+(defn- native-handle-type?
+  ([type] (native-handle-type? type 0))
+  ([type depth]
+   (and (<= depth max-handle-depth)
+        (or (native-word-value-type? type)
+            (native-scalar-record-type? type)
+            (and (vector? type) (seq type)
+                 (case (first type)
+                   :ref (and (= 2 (count type)) (keyword? (second type))
+                             (some? (namespace (second type))))
+                   (:record :variant) (and (= 3 (count type)) (keyword? (second type))
+                                           (some? (namespace (second type)))
+                                           (native-handle-members? (nth type 2) depth))
+                   :vector (and (= 2 (count type)) (vector? (second type))
+                                (<= 1 (count (second type)) max-handle-members)
+                                (every? #(native-handle-type? % (inc depth)) (second type)))
+                   :option (and (= 2 (count type))
+                                (native-handle-type? (second type) (inc depth)))
+                   :result (and (= 3 (count type))
+                                (native-handle-type? (second type) (inc depth))
+                                (native-handle-type? (nth type 2) (inc depth)))
+                   false))))))
+
+(defn- handle-of? [head type]
+  (and (vector? type) (= head (first type)) (native-handle-type? type)))
+
+(defn- boxed-payload-variant-type?
+  "A variant with any payload other than :i64/:bool. The producer boxes every
+  such variant (and every record in its module) into pair handles; it never
+  scalar-replaces one."
+  [type]
+  (and (handle-of? :variant type)
+       (boolean (some #(not (contains? #{:i64 :bool} (second %))) (nth type 2)))))
+
+(def ^:private hetero-vector-operations
+  '#{hetero-vector-new hetero-vector-count hetero-vector-at hetero-vector-assoc})
+
+(def ^:dynamic *boxed-aggregates?*
+  "True while verifying a module the producer lowers entirely to pair handles:
+  one that constructs a boxed-payload variant or uses a heterogeneous vector.
+  In such a module a record or variant value is one word wherever it flows,
+  so a binding or a branch may carry it -- which a scalar-replaced value
+  (N slots) may not."
+  false)
+
+(defn- boxed-aggregate-module? [program]
+  (boolean
+   (some #(or (boxed-payload-variant-type? %)
+              (and (seq? %) (contains? hetero-vector-operations (first %))))
+         (tree-seq coll? seq (:functions program)))))
+
+(defn- host-index [value]
+  #?(:clj (long value) :cljs (js/Number value)))
+
+(defn- nominal= [type declared]
+  (or (= type declared)
+      (and (vector? declared) (= 2 (count declared)) (= :ref (first declared))
+           (vector? type) (= (second declared) (second type)))))
+
+(declare ^:dynamic *call-results*)
+
+(defn- handle-type-of
+  "The declared handle type FORM denotes in a boxed module, or nil."
+  [form locals]
+  (cond
+    (symbol? form)
+    (let [local (get locals form)]
+      (if (and (map? local) (:aggregate/kind local)) (:aggregate/type local) local))
+
+    (seq? form)
+    (let [[op & args] form]
+      (cond
+        (contains? '#{record-new variant-new hetero-vector-new hetero-vector-assoc} op)
+        (first args)
+
+        (= op 'hetero-vector-at)
+        (let [[type _ index] args]
+          (when (and (handle-of? :vector type) (guest-integer? index)
+                     (<= 0 index) (< (host-index index) (count (second type))))
+            (nth (second type) (host-index index))))
+
+        (= op 'record-get)
+        (let [[type _ field] args]
+          (when (handle-of? :record type)
+            (some (fn [[name field-type]] (when (= name field) field-type)) (nth type 2))))
+
+        (= op 'if)
+        (let [then-type (handle-type-of (nth form 2 nil) locals)]
+          (when (and then-type (= then-type (handle-type-of (nth form 3 nil) locals)))
+            then-type))
+
+        (and (simple-symbol? op) (contains? *call-results* op))
+        (get *call-results* op)
+
+        :else nil))
+
+    :else nil))
+
 ;; Mirrors `kotoba.wasm.core`'s `utf8` -- `.getBytes` is
 ;; JVM-only, cljs has no `String`/`Charset`; `TextEncoder` is the
 ;; UTF-8-safe equivalent.
@@ -703,6 +824,9 @@
     (and (seq? form) (= 'typed-cap-call (first form)))
     (let [[_ _cap-id _request-type _result-type request] form]
       (bounded-sum [1 (lowered-cost request env)]))
+    (and (seq? form) (contains? hetero-vector-operations (first form)))
+    (let [[_ _type & operands] form]
+      (bounded-sum (cons 1 (map #(if (guest-integer? %) 1 (lowered-cost % env)) operands))))
     (and (seq? form) (= 'typed-set-new (first form)))
     (let [[_ _type & items] form]
       (bounded-sum (cons 1 (map #(lowered-cost % env) items))))
@@ -974,7 +1098,9 @@
         (when-not (valid-name? name)
           (reject! "runtime KIR local name rejected" {:name name}))
         (verify-expr! value env signatures (inc depth) nodes facts)
-        (recur (next pairs) (assoc env name (binding-local value))))
+        (recur (next pairs) (assoc env name (or (binding-local value)
+                                                 (when *boxed-aggregates?*
+                                                   (handle-type-of value env))))))
       env)))
 
 (defn- verify-expr! [form locals signatures depth nodes facts]
@@ -1128,7 +1254,9 @@
 
         (= op 'record-new)
         (let [[type & values] args
-              fields (when (native-scalar-record-type? type) (nth type 2))]
+              fields (when (or (native-scalar-record-type? type)
+                               (and *boxed-aggregates?* (handle-of? :record type)))
+                       (nth type 2))]
           (when-not (and fields (= (count fields) (count values)))
             (reject! "runtime KIR record construction rejected" {:operation op}))
           (doseq [arg values] (verify-expr! arg locals signatures (inc depth) nodes facts)))
@@ -1150,9 +1278,11 @@
         ;; well-formed record that IS the one the operand was declared with.
         (= op 'record-get)
         (let [[type value field] args
-              declared (record-schema-of value locals)]
+              declared (or (record-schema-of value locals)
+                           (when *boxed-aggregates?* (handle-type-of value locals)))]
           (when-not (and (= 3 (count args))
-                        (native-scalar-record-type? type)
+                        (or (native-scalar-record-type? type)
+                            (and *boxed-aggregates?* (handle-of? :record type)))
                         (keyword? field)
                         (some #(= field (first %)) (nth type 2))
                         ;; The operand's schema must be the one being projected.
@@ -1173,7 +1303,8 @@
         ;; be one of the type's own declared cases.
         (= op 'variant-new)
         (let [[type tag payload] args
-              case-type (when (native-scalar-variant-type? type)
+              case-type (when (or (native-scalar-variant-type? type)
+                                  (boxed-payload-variant-type? type))
                           (some (fn [[case-tag payload-type]]
                                   (when (= case-tag tag) payload-type))
                                 (nth type 2)))]
@@ -1190,12 +1321,15 @@
         ;; ordinal order.
         (= op 'variant-match)
         (let [[type value branches] args
-              cases (when (native-scalar-variant-type? type) (nth type 2))
-              declared (variant-schema-of value locals)]
+              boxed? (boxed-payload-variant-type? type)
+              cases (when (or (native-scalar-variant-type? type) boxed?) (nth type 2))
+              declared (if boxed?
+                         (handle-type-of value locals)
+                         (variant-schema-of value locals))]
           (when-not (and (= 3 (count args)) cases
                         (vector? branches) (= (mapv first cases) (mapv first branches))
                         (every? #(and (vector? %) (= 3 (count %)) (valid-name? (second %))) branches)
-                        (= type declared))
+                        (if boxed? (nominal= type declared) (= type declared)))
             (reject! "runtime KIR variant dispatch rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
           ;; Each branch's binder carries the schema of ITS OWN declared case
@@ -1205,14 +1339,40 @@
           (doseq [[[_ payload-type] [_ binder body]] (map vector cases branches)]
             (verify-expr! body
                           (assoc locals binder
-                                 (when (native-scalar-record-type? payload-type) payload-type))
+                                 (cond
+                                   (native-scalar-record-type? payload-type) payload-type
+                                   boxed? (when (native-handle-type? payload-type) payload-type)
+                                   :else nil))
                           signatures (inc depth) nodes facts)))
+
+        ;; ABI v8: a heterogeneous vector is a pair chain; every index is a
+        ;; literal inside the declared positions, so projection cannot miss.
+        (= op 'hetero-vector-new)
+        (let [[type & items] args]
+          (when-not (and *boxed-aggregates?* (handle-of? :vector type)
+                         (= (count items) (count (second type))))
+            (reject! "runtime KIR heterogeneous vector construction rejected" {:operation op}))
+          (doseq [item items] (verify-expr! item locals signatures (inc depth) nodes facts)))
+
+        (contains? '#{hetero-vector-count hetero-vector-at hetero-vector-assoc} op)
+        (let [[type value index item] args
+              arity (get '{hetero-vector-count 2 hetero-vector-at 3 hetero-vector-assoc 4} op)]
+          (when-not (and *boxed-aggregates?* (= arity (count args))
+                         (handle-of? :vector type)
+                         (nominal= type (handle-type-of value locals))
+                         (or (= op 'hetero-vector-count)
+                             (and (guest-integer? index) (<= 0 index)
+                                  (< (host-index index) (count (second type))))))
+            (reject! "runtime KIR heterogeneous vector operation rejected" {:operation op}))
+          (verify-expr! value locals signatures (inc depth) nodes facts)
+          (when (= op 'hetero-vector-assoc)
+            (verify-expr! item locals signatures (inc depth) nodes facts)))
 
         (contains? '#{option-some-of option-some?-of} op)
         (let [[type value] args]
           (when-not (and (= 2 (count args))
                          (vector? type) (= :option (first type))
-                         (native-word-value-type? type))
+                         (native-handle-type? type))
             (reject! "runtime KIR generic option operation rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts))
 
@@ -1220,14 +1380,14 @@
         (let [[type] args]
           (when-not (and (= 1 (count args))
                          (vector? type) (= :option (first type))
-                         (native-word-value-type? type))
+                         (native-handle-type? type))
             (reject! "runtime KIR generic option operation rejected" {:operation op})))
 
         (= op 'option-value-of)
         (let [[type value fallback] args]
           (when-not (and (= 3 (count args))
                          (vector? type) (= :option (first type))
-                         (native-word-value-type? type))
+                         (native-handle-type? type))
             (reject! "runtime KIR generic option projection rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
           (verify-expr! fallback locals signatures (inc depth) nodes facts))
@@ -1236,7 +1396,7 @@
         (let [[type value none-body binder some-body] args]
           (when-not (and (= 5 (count args))
                          (vector? type) (= :option (first type))
-                         (native-word-value-type? type)
+                         (native-handle-type? type)
                          (valid-name? binder))
             (reject! "runtime KIR generic option match rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
@@ -1252,7 +1412,7 @@
         (let [[type value] args]
           (when-not (and (= 2 (count args))
                          (vector? type) (= :result (first type))
-                         (native-word-value-type? type))
+                         (native-handle-type? type))
             (reject! "runtime KIR generic result operation rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts))
 
@@ -1260,7 +1420,7 @@
         (let [[type value fallback] args]
           (when-not (and (= 3 (count args))
                          (vector? type) (= :result (first type))
-                         (native-word-value-type? type))
+                         (native-handle-type? type))
             (reject! "runtime KIR generic result projection rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
           (verify-expr! fallback locals signatures (inc depth) nodes facts))
@@ -1269,7 +1429,7 @@
         (let [[type value ok-binder ok-body err-binder err-body] args]
           (when-not (and (= 6 (count args))
                          (vector? type) (= :result (first type))
-                         (native-word-value-type? type)
+                         (native-handle-type? type)
                          (valid-name? ok-binder) (valid-name? err-binder))
             (reject! "runtime KIR generic result match rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
@@ -1866,7 +2026,11 @@
 
 (defn- native-function-boundary-type? [type exported?]
   (or (native-boundary-type? type)
-      (and (not exported?) (native-private-handle-type? type))))
+      (and (not exported?)
+           (or (native-private-handle-type? type)
+               ;; ABI v8: a recursive/generic aggregate handle crosses an
+               ;; INTERNAL call as one word. Exports keep the host-validated set.
+               (native-handle-type? type)))))
 
 (defn- native-export-copy-result-type? [type]
   ;; The backend/loader copy ABI v1 can marshal only a top-level vector result.
@@ -1878,9 +2042,45 @@
 ;; way to hit it -- an entry returning `:bool` -- surfaced as "module shape
 ;; rejected" with nothing to go on. A verifier may refuse anything it likes,
 ;; but it must be possible to learn what it refused.
+(def ^:private max-schema-table-entries 32)
+
+(defn- recursive-schema-table?
+  "Independent copy: true when some schema reaches itself through `[:ref ...]`."
+  [table]
+  (letfn [(refs [node]
+            (keep #(when (and (vector? %) (= 2 (count %)) (= :ref (first %)))
+                     (second %))
+                  (tree-seq coll? seq node)))]
+    (boolean
+     (some (fn [start]
+             (loop [frontier (vec (refs (get table start))) seen #{}]
+               (if-let [name (first frontier)]
+                 (cond (= name start) true
+                       (contains? seen name) (recur (subvec frontier 1) seen)
+                       :else (recur (into (subvec frontier 1) (refs (get table name)))
+                                    (conj seen name)))
+                 false)))
+           (keys table)))))
+
 (def ^:private module-shape-checks
   [[:map (fn [p] (map? p))]
-   [:keys (fn [p] (= #{:format :entry :exports :signature :effects :functions} (set (keys p))))]
+   [:keys (fn [p] (contains? #{#{:format :entry :exports :signature :effects :functions}
+                               #{:format :entry :exports :signature :effects :functions :schemas}}
+                             (set (keys p))))]
+   ;; ABI v8: a RECURSIVE schema table travels with the program, because a
+   ;; type that names itself cannot be expanded into the signatures that use
+   ;; it. Only a recursive one: re-derived here, so a producer that attached a
+   ;; table it had no need of is refused rather than trusted.
+   [:schemas (fn [p] (or (not (contains? p :schemas))
+                         (let [table (:schemas p)]
+                           (and (map? table) (<= 1 (count table) max-schema-table-entries)
+                                (every? #(and (keyword? %) (some? (namespace %))) (keys table))
+                                (every? (fn [[name descriptor]]
+                                          (and (native-handle-type? descriptor)
+                                               (vector? descriptor)
+                                               (= name (second descriptor))))
+                                        table)
+                                (recursive-schema-table? table)))))]
    [:format (fn [p] (contains? #{:kotoba.kir/v3 :kotoba.kir/v4} (:format p)))]
    ;; A module either has an entry -- `main`, zero-arity, host-readable result
    ;; -- or it is a LIBRARY: no entry, no signature, and an export list that
@@ -1916,6 +2116,10 @@
                                     (or (native-scalar-record-type? t)
                                         (and (vector? t) (= 2 (count t))
                                              (= :ref (first t)) (keyword? (second t))))
+                                    t
+                                    ;; ABI v8: in a boxed module every aggregate
+                                    ;; parameter is a handle and keeps its type.
+                                    (and *boxed-aggregates?* (native-handle-type? t))
                                     t
                                     :else nil))]))
           (:params function))))
@@ -2031,7 +2235,8 @@
     ;; treated as a failure of that same named condition.
     (when-not (try (boolean (check program)) (catch #?(:clj Throwable :cljs :default) _ false))
       (reject! "runtime KIR module shape rejected" {:condition label})))
-  (binding [*call-results* (into {} (map (juxt :name :result) (:functions program)))]
+  (binding [*call-results* (into {} (map (juxt :name :result) (:functions program)))
+            *boxed-aggregates?* (boxed-aggregate-module? program)]
     (let [functions (:functions program)
           exports (set (:exports program))
           signatures

@@ -1088,7 +1088,9 @@
                (list 'let ['v variant-if] (match-variant 'v)))))))
 
 (deftest variant-sroa-admission-stays-fail-closed
-  (let [string-variant '[:variant :t/string [[:number :i64] [:text :string]]]]
+  ;; ABI v8 boxes any one-word payload (a string is a pair handle), so the
+  ;; non-scalar family that must stay refused is one that is NOT one word.
+  (let [string-variant '[:variant :t/bytes [[:number :i64] [:blob :bytes]]]]
     (testing "symbol forwarding"
       (is (= "runtime KIR variant dispatch rejected"
              (variant-outcome
@@ -1105,9 +1107,9 @@
     (testing "non-scalar local payload family"
       (is (= "runtime KIR variant dispatch rejected"
              (variant-outcome
-              (list 'let ['v (list 'variant-new string-variant :text "x")]
+              (list 'let ['v (list 'variant-new string-variant :number 1)]
                     (list 'variant-match string-variant 'v
-                          [[:number 'x 'x] [:text 'x 0]]))))))
+                          [[:number 'x 'x] [:blob 'x 0]]))))))
     (testing "reordered branches"
       (is (= "runtime KIR variant dispatch rejected"
              (variant-outcome
