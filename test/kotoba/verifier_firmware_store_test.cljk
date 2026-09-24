@@ -16,7 +16,7 @@
   compile. It shifts every argument by one and hands `AllocatePages` a page
   count that was meant to be a memory type -- and kotoba-sema has already
   certified a window over the pages on the strength of the count it read."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.verifier]))
 
 (def ^:private program

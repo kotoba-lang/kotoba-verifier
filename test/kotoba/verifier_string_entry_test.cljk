@@ -6,7 +6,7 @@
   while admitting the identical shape for internal functions was an
   asymmetry, not a rule (verifier.cljc's own function-result-types
   comment). Measures the kbb env-read tranche (ADR-2607181900 slice 3)."
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [kotoba.verifier]))
 
 (def string-entry-program

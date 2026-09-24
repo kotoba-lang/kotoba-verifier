@@ -1,7 +1,7 @@
 (ns kotoba.verifier-test
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [kotoba.artifact.core :as artifact]
             [kotoba.kir :as ir]
             [kotoba.kir.compatibility :as compatibility]
