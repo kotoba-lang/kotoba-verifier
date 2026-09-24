@@ -58,7 +58,9 @@
          ;; behind 0, forward only): verify-artifact! now calls
          ;; kotoba.kir/oracle-inconclusive-trap and budget-traps, which exist
          ;; from adr-2609242100 P4 on.
-         :git/sha "f305bb00589768bfa9e1eb5fb1e9cd9aab0ce949"}
+         ;; Advanced 2026-09-25, f305bb00 -> 353dd5f3 (osaho main, ahead 8, forward only):
+         ;; the bytes heads' reference semantics and native admission, which this verifier's oracle re-runs (superproject adr-2609242330).
+         :git/sha "353dd5f30bf803528f355f3b8090413a71e51bc8"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
          :git/sha "ba29522ece748d2f7ff420d2ba45b1126c94baf8"}
@@ -95,7 +97,9 @@
         ;; call cannot clobber) and the pin below is at kotoba-native main.
         io.github.kotoba-lang/kotoba-gmir
         {:git/url "https://github.com/kotoba-lang/kotoba-gmir.git"
-         :git/sha "cf39f7c1a239666b5e0e3ac82c27bdeb6add0807"}
+         ;; Advanced 2026-09-25, cf39f7c1 -> 47763164 (kotoba-gmir main, ahead 4, forward only):
+         ;; the four ABI v11 runtime arities (superproject adr-2609242330).
+         :git/sha "47763164ceec7be14d67fc35ef619f71d383eab9"}
         ;; Advanced 2026-09-02 from a2023fed (302 commits behind) now that the
         ;; `pinned-producer-*` blocker above is diagnosed and repaired. A pin
         ;; that cannot advance stops exercising every new operation through
