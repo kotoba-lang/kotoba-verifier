@@ -25,7 +25,7 @@
   bytes summing to 1020 rather than to a negative -- all correct. That is the
   primitive the provider CLI's `generate!` refuses on today
   (`:kotodama/blocked-on :kotoba/bytes-access`)."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.verifier :as verifier]))
 
 (def ^:private provenance #'verifier/granted-region-provenance)

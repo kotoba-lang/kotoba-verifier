@@ -20,7 +20,7 @@
   measured 2026-09-08, `amu extract-native` gave `:offset 0 :length 8` and
   `kexe_loader <bin> 0 0 aarch64 -` printed 42. Rebuild it the same way, and
   run it, if this repository's osaho pin moves the target profile again."
-  (:require [clojure.test :as t :refer [deftest is testing]]
+  (:require [kotoba.test :as t :refer [deftest is testing]]
             [clojure.edn :as edn]
             [kotoba.verifier :as verifier]
             #?(:clj [clojure.java.io :as io])

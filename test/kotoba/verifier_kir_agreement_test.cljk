@@ -26,7 +26,7 @@
   Both are the values the code uses, not descriptions kept alongside it."
   (:require [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [kotoba.kir :as kir]
             [kotoba.verifier]))
 

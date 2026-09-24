@@ -8,7 +8,7 @@
   is the only thing in it that can be wrong: the argument is not walked (it
   is source text, not an expression), so nothing else stands between a
   misspelling and a backend `lea` at a label it would have to invent."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.verifier]))
 
 (def ^:private program

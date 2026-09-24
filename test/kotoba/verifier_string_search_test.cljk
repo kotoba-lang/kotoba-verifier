@@ -19,7 +19,7 @@
   What is pinned here is the arity contract: the three shapes with a lowering
   are admitted, every other arity is refused, and the operands are still
   verified."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.verifier]))
 
 (defn- program [body]
