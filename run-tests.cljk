@@ -20,7 +20,8 @@
             [kotoba.verifier-signing-parity-test]
             ;; the first test that verifies a real native artifact on this host
             [kotoba.verifier-native-artifact-test]
-            [kotoba.verifier-arena-scope-test]))
+            [kotoba.verifier-arena-scope-test]
+            [kotoba.verifier-recursive-adt-test]))
 
 (defmethod t/report [:cljs.test/default :end-run-tests] [m]
   (println (str "\nnbb: " (:test m) " tests, " (:pass m) " passed, "
@@ -43,4 +44,5 @@
              'kotoba.verifier-shift-literal-test
              'kotoba.verifier-signing-parity-test
              'kotoba.verifier-native-artifact-test
-             'kotoba.verifier-arena-scope-test)
+             'kotoba.verifier-arena-scope-test
+             'kotoba.verifier-recursive-adt-test)
