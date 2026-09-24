@@ -17,7 +17,7 @@
   self-consistent and still disagree with the other one about DER, and a
   suite that only ever signs and verifies within one process cannot see it."
   (:require [kotoba.test :as t :refer [deftest is testing]]
-            [clojure.edn :as edn]
+            [kotoba.lang.edn :as edn]
             [kotoba.verifier.signing :as signing]
             #?(:clj [clojure.java.io :as io])
             #?(:cljs ["node:fs" :as fs])

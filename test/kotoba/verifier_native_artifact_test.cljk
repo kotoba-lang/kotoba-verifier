@@ -21,7 +21,7 @@
   `kexe_loader <bin> 0 0 aarch64 -` printed 42. Rebuild it the same way, and
   run it, if this repository's osaho pin moves the target profile again."
   (:require [kotoba.test :as t :refer [deftest is testing]]
-            [clojure.edn :as edn]
+            [kotoba.lang.edn :as edn]
             [kotoba.verifier :as verifier]
             #?(:clj [clojure.java.io :as io])
             #?(:cljs ["node:fs" :as fs])
