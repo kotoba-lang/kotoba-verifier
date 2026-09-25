@@ -45,11 +45,15 @@
    :static-elf {:admitted-slots {:value [:pair-new :pair-first :pair-second :string-equal
                                          :string-concat :string-substring :string-index-of
                                          :typed-cap-call]}
-                :capability-handlers {:value {7 :clock/now 33 :env/read 34 :fs/browse 35 :fs/app-data
+                :capability-handlers {:value {7 :clock/now 20 :process/spawn 23 :entropy/draw
+                                              33 :env/read 34 :fs/browse 35 :fs/app-data
                                               37 :io/write 38 :cli/args 39 :io/write-error 41 :io/read}}
                 :unimplemented-slot-trap :slot/unimplemented
+                ;; :capability/refused since adr-2609251400 C3's second half
+                ;; (the packager requires it of an image with handlers)
                 :exit-codes {:value {:ok 0 :trap/signal 120 :budget/fuel 122 :budget/cells 123
-                                     :budget/bytes 124 :slot/unimplemented 125}}}})
+                                     :budget/bytes 124 :slot/unimplemented 125
+                                     :capability/refused 126}}}})
 
 (defn- reason [f]
   (try (f) nil (catch #?(:clj Exception :cljs :default) e (:reason (ex-data e)))))
@@ -116,6 +120,9 @@
     (testing "the packaged image verifies, with its grant and its decision code"
       (is (:ok report))
       (is (= [37 38] (:grant report)))
+      ;; no :process/spawn in the effects: the spawn grant reported is the
+      ;; empty one (adr-2609251400 C3, second half)
+      (is (= {:programs [] :path-lookup false :env []} (:spawn report)))
       (is (= :implemented (get-in report [:slots :typed-cap-call])))
       (is (= [:decisions :handlers] (mapv :which (:decision-code report)))))
     (testing "one byte of the handler decision code"
