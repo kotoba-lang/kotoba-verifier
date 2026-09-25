@@ -19,7 +19,7 @@
   (:require [kotoba.test :as t :refer [deftest is testing]]
             [kotoba.lang.edn :as edn]
             [kotoba.verifier.signing :as signing]
-            #?(:clj [clojure.java.io :as io])
+            #?(:clj [kotoba.io :as io])
             #?(:cljs ["node:fs" :as fs])
             #?(:cljs ["node:path" :as path])))
 
@@ -113,7 +113,7 @@
                                                :expires (host-int 4102444800)})
           forged (assoc-in envelope [:statement :expires] "4102444800")
           refusal (try (signing/verify forged (trust-for key) 1000) nil
-                       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+                       (catch :default e
                          (ex-message e)))]
       (is (= "signature statement mismatch" refusal)))))
 
@@ -124,7 +124,7 @@
           envelope (signing/sign artifact key {:not-before (host-int 100)
                                                :expires (host-int 200)})
           refusal (fn [now] (try (signing/verify envelope (trust-for key) now) nil
-                                 (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+                                 (catch :default e
                                    (ex-message e))))]
       (is (= "signature is not yet valid" (refusal 99)))
       (is (nil? (refusal 100)))

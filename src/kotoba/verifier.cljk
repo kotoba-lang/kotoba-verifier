@@ -19,7 +19,8 @@
                      [kotoba.kir.cljs-i64 :as i64]
                      [kotoba.kir.compatibility :as compatibility-profile]
                      [kotoba.kir :as ir]
-                     [kotoba.kir.target :as target-profile])))
+                     [kotoba.kir.target :as target-profile]))
+  (:require [kotoba.bytes :as kbytes]))
 
 ;; memwidth: the checked-memory surface, four transfer widths by four window
 ;; tiers plus the element-indexed slice family (amu ADR 0285).
@@ -785,7 +786,7 @@
 ;; JVM-only, cljs has no `String`/`Charset`; `TextEncoder` is the
 ;; UTF-8-safe equivalent.
 (defn- utf8-byte-count [s]
-  #?(:clj (alength (.getBytes ^String s "UTF-8"))
+  #?(:clj (alength (kbytes/utf8-bytes ^String s))
      :cljs (.-length (.encode (js/TextEncoder.) s))))
 
 (defn- valid-name? [value]

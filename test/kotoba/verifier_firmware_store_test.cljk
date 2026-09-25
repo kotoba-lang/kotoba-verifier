@@ -16,7 +16,7 @@
   compile. It shifts every argument by one and hands `AllocatePages` a page
   count that was meant to be a memory type -- and kotoba-sema has already
   certified a window over the pages on the strength of the count it read."
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotoba.verifier]))
 
 (def ^:private program
@@ -30,11 +30,11 @@
 
 (defn- verifies? [body]
   (try (do (verify body) true)
-       (catch clojure.lang.ExceptionInfo _ false)))
+       (catch kerror/ExceptionInfo _ false)))
 
 (defn- rejection [body]
   (try (do (verify body) nil)
-       (catch clojure.lang.ExceptionInfo e (ex-message e))))
+       (catch kerror/ExceptionInfo e (ex-message e))))
 
 (deftest the-allocation-verifies-at-six-operands
   (is (verifies? '(kernel-uefi-alloc-region 4096 40 0 2 1 0)))

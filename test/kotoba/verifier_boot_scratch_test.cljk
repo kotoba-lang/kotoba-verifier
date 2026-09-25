@@ -8,7 +8,7 @@
   is the only thing in it that can be wrong: the argument is not walked (it
   is source text, not an expression), so nothing else stands between a
   misspelling and a backend `lea` at a label it would have to invent."
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotoba.verifier]))
 
 (def ^:private program
@@ -23,11 +23,11 @@
 
 (defn- verifies? [body]
   (try (do (verify body) true)
-       (catch clojure.lang.ExceptionInfo _ false)))
+       (catch kerror/ExceptionInfo _ false)))
 
 (defn- rejection [body]
   (try (do (verify body) nil)
-       (catch clojure.lang.ExceptionInfo e (ex-message e))))
+       (catch kerror/ExceptionInfo e (ex-message e))))
 
 (deftest the-scratch-region-is-verified-at-zero-arity
   (is (verifies? '(kernel-scratch-region)))
