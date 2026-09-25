@@ -166,7 +166,11 @@
          ;; its options map (:handlers :grant :fs-scope), which
          ;; `verify-image!` now passes through to re-derive an image with
          ;; effects (adr-2609251400 C3).
-         :git/sha "d8f668cd6625f535c2ab1d3e388cb97c9bbc969f"}
+         ;; Advanced 2026-09-25, d8f668cd -> 6d5afeda (kotoba-native main,
+         ;; forward only): the packager's :process/spawn / :entropy/draw
+         ;; handlers and :spawn option, which `verify-image!` re-derives and
+         ;; now reports (adr-2609251400 C3, second half).
+         :git/sha "6d5afeda70cca040f4fc4eb34fcd4e7644d8ab3c"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}

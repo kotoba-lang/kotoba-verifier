@@ -78,8 +78,10 @@
   "Verify `image` (the bytes `amu compile --target *-linux-static` wrote) as
   the static ELF of `artifact` under `profile` (`(:profile/native
   limits-table)`) and `options` -- what it was packaged with: the sealed
-  handler-decision artifacts, and the grant and fs scope the compile policy
-  named (superproject adr-2609251400 C3). Returns a report; refuses with
+  handler-decision artifacts, and the grant, fs scope and :process/spawn
+  grant the compile policy named (superproject adr-2609251400 C3; the spawn
+  grant since its second half -- its programs are sealed into the text, so
+  the byte-for-byte re-derivation below holds them too). Returns a report; refuses with
   `:phase :verify` and a `:reason`.
 
   With capability effects, three more things are re-derived rather than
@@ -152,4 +154,5 @@
        :prelude-bytes (:prelude-size expected)
        :budgets (:budgets expected) :fuel (:fuel expected) :slots (:slots expected)
        :grant (:grant expected) :fs-scope (:fs-scope expected)
+       :spawn (:spawn expected)
        :decision-code (:decision-code expected)}))))
