@@ -19,7 +19,7 @@
   What is pinned here is the arity contract: the three shapes with a lowering
   are admitted, every other arity is refused, and the operands are still
   verified."
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotoba.verifier]))
 
 (defn- program [body]
@@ -31,7 +31,7 @@
   "The ex-message `verify-program!` refused `body` with, or nil if it passed."
   [body]
   (try (#'kotoba.verifier/verify-program! (program body)) nil
-       (catch clojure.lang.ExceptionInfo e (ex-message e))))
+       (catch kerror/ExceptionInfo e (ex-message e))))
 
 (deftest both-operations-verify
   (doseq [body ['(string-contains? "haystack" "needle")

@@ -24,7 +24,7 @@
               the two arms of `verify-expr!`
 
   Both are the values the code uses, not descriptions kept alongside it."
-  (:require [kotoba.lang.coll :as set]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [kotoba.kir :as kir]
@@ -140,7 +140,7 @@
                   {:name 'main :params [] :param-types []
                    :result :i64 :effects #{} :body 0}]}
         data (try (@#'kotoba.verifier/verify-program! program) nil
-                  (catch clojure.lang.ExceptionInfo e
+                  (catch kerror/ExceptionInfo e
                     (assoc (ex-data e) ::message (.getMessage e))))]
     (is (= :verify (:phase data)))
     (is (= 'p (:function data)))
@@ -157,7 +157,7 @@
                     {:name 'main :params [] :param-types []
                      :result :i64 :effects #{} :body 0}]}
           data (try (@#'kotoba.verifier/verify-program! program) nil
-                    (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                    (catch kerror/ExceptionInfo e (ex-data e)))]
       (is (= [:slice :u8] (:type data)))
       (is (= :kotoba.error/slice-not-a-native-boundary-type (:reason data)))))
   (testing "and the ERASED program passes the same gate"

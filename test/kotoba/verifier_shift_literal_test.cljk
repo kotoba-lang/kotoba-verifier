@@ -44,7 +44,7 @@
   [body]
   (try (#'kotoba.verifier/verify-program! (program body))
        nil
-       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+       (catch :default e
          (when-not (= :verify (:phase (ex-data e)))
            (throw e))
          (ex-message e))))

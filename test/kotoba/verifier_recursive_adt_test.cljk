@@ -34,7 +34,7 @@
 (defn- rejection [program]
   (try (#'kotoba.verifier/verify-program! program)
        nil
-       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
+       (catch :default e
          (when-not (= :verify (:phase (ex-data e)))
            (throw e))
          (ex-message e))))

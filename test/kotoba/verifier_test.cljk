@@ -1,6 +1,6 @@
 (ns kotoba.verifier-test
-  (:require [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.edn :as edn]
+            [kotoba.io :as io]
             [kotoba.test :refer [deftest is testing]]
             [kotoba.artifact.core :as artifact]
             [kotoba.kir :as ir]
@@ -121,7 +121,7 @@
       (is (= (aggregate-abi/call-profile target)
              (aggregate-abi/admit-extracted-call! target guarantees)) target)
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo #"missing-call-guarantees"
+           kerror/ExceptionInfo #"missing-call-guarantees"
            (aggregate-abi/admit-extracted-call!
             target (disj guarantees :spill-live-values-across-call))) target))
     (is (not (#'kotoba.verifier/native-boundary-type?
@@ -443,7 +443,7 @@
                                  (assoc-in [:limits :fuel] (inc ir/max-fuel))))
               #"native fuel budget is not admitted"]]]
       (testing (name label)
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo message
+        (is (thrown-with-msg? kerror/ExceptionInfo message
                               (kotoba.verifier/verify-artifact! changed)))))))
 
 ;; fuel64: the positive half. Without it the test above says only that SOME
@@ -488,7 +488,7 @@
              [:kir (assoc surface :kir-sha256 (apply str (repeat 64 "0")))]
              [:admission (assoc-in surface [:admission :policy-id] :other)]]]
       (testing (name label)
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? kerror/ExceptionInfo
                      (conformance/verify-dual-surface!
                       kir surface changed)))))))
 
@@ -503,7 +503,7 @@
 
 (defn- shape-condition [program]
   (try (#'kotoba.verifier/verify-program! program) nil
-       (catch clojure.lang.ExceptionInfo e
+       (catch kerror/ExceptionInfo e
          (when (= "runtime KIR module shape rejected" (ex-message e))
            (:condition (ex-data e))))))
 
@@ -532,13 +532,13 @@
   (try (#'kotoba.verifier/verify-program!
         (assoc-in ok-program [:functions 0 :body] body))
        true
-       (catch clojure.lang.ExceptionInfo _ false)))
+       (catch kerror/ExceptionInfo _ false)))
 
 (defn- rejection [body]
   (try (#'kotoba.verifier/verify-program!
         (assoc-in ok-program [:functions 0 :body] body))
        nil
-       (catch clojure.lang.ExceptionInfo e (ex-message e))))
+       (catch kerror/ExceptionInfo e (ex-message e))))
 
 (deftest both-vector-families-are-admitted-at-their-kir-arities
   (doseq [body ['(vector-new)
@@ -613,12 +613,12 @@
     (doseq [indexes [[1] [0 0] [0 -1] ["0"]]]
       (testing (pr-str indexes)
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+             kerror/ExceptionInfo #"runtime KIR function shape rejected"
              (#'kotoba.verifier/verify-program!
               (assoc-in program [:functions 1 :closure-param-indexes] indexes))))))
     (testing "the refined parameter keeps its i64 ABI type"
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+           kerror/ExceptionInfo #"runtime KIR function shape rejected"
            (#'kotoba.verifier/verify-program!
             (assoc-in program [:functions 1 :param-types] [:string])))))))
 
@@ -631,11 +631,11 @@
     (doseq [value [false 1 :yes]]
       (testing (pr-str value)
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+             kerror/ExceptionInfo #"runtime KIR function shape rejected"
              (#'kotoba.verifier/verify-program!
               (assoc-in program [:functions 1 :closure-result?] value))))))
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+         kerror/ExceptionInfo #"runtime KIR function shape rejected"
          (#'kotoba.verifier/verify-program!
           (assoc-in program [:functions 1 :result] :string))))))
 
@@ -648,18 +648,18 @@
     (doseq [indexes [[1] [0 0] [0 -1] ["0"]]]
       (testing (pr-str indexes)
         (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+             kerror/ExceptionInfo #"runtime KIR function shape rejected"
              (#'kotoba.verifier/verify-program!
               (assoc-in program [:functions 1 :i64-pair-chain-param-indexes]
                         indexes))))))
     (testing "the refined parameter keeps its i64 ABI type"
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+           kerror/ExceptionInfo #"runtime KIR function shape rejected"
            (#'kotoba.verifier/verify-program!
             (assoc-in program [:functions 1 :param-types] [:string])))))
     (testing "pair-chain and closure refinements cannot overlap"
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo #"runtime KIR function shape rejected"
+           kerror/ExceptionInfo #"runtime KIR function shape rejected"
            (#'kotoba.verifier/verify-program!
             (assoc-in program [:functions 1 :closure-param-indexes] [0])))))))
 
@@ -689,7 +689,7 @@
   a row can never pass by being refused for an unrelated reason."
   [program]
   (try (#'kotoba.verifier/verify-program! program) false
-       (catch clojure.lang.ExceptionInfo e
+       (catch kerror/ExceptionInfo e
          (if (= "runtime KIR function shape rejected" (ex-message e))
            true
            [:other (ex-message e)]))))
@@ -926,7 +926,7 @@
   input -- the hazard this whole area has."
   [result body]
   (try (#'kotoba.verifier/verify-program! (handle-program result body)) nil
-       (catch clojure.lang.ExceptionInfo e (ex-message e))))
+       (catch kerror/ExceptionInfo e (ex-message e))))
 
 (deftest a-let-bound-boxed-handle-may-be-projected
   ;; `(let [h (mk)] (record-get … h :b))` -- murakumo's `infer_plan_core`,
@@ -1054,7 +1054,7 @@
   (try (#'kotoba.verifier/verify-program!
         (assoc-in ok-program [:functions 0 :body] body))
        nil
-       (catch clojure.lang.ExceptionInfo e (ex-message e))))
+       (catch kerror/ExceptionInfo e (ex-message e))))
 
 (defn- match-variant [value]
   (list 'variant-match scalar-variant value
@@ -1250,7 +1250,7 @@
                 (clock-match (list 'typed-cap-call 7 clock-request scalar-variant
                                    (list 'variant-new clock-request :wall false)))))
               nil
-              (catch clojure.lang.ExceptionInfo e (ex-message e))))
+              (catch kerror/ExceptionInfo e (ex-message e))))
       "a non-clock typed-cap-call result is not a clock-v1 match operand")
   (is (= "runtime KIR variant dispatch rejected"
          (variant-outcome
@@ -1313,12 +1313,12 @@
 (deftest scalar-variant-boundary-stays-narrow-and-ordinal-closed
   (let [string-variant '[:variant :t/text [[:text :string]]]]
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"function shape rejected"
+         kerror/ExceptionInfo #"function shape rejected"
          (#'kotoba.verifier/verify-program!
           (assoc-in (variant-boundary-program 0)
                     [:functions 0 :param-types] [string-variant]))))
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo #"variant dispatch rejected"
+         kerror/ExceptionInfo #"variant dispatch rejected"
          (#'kotoba.verifier/verify-program!
           (variant-boundary-program
            (list 'variant-match scalar-variant 'value
@@ -1349,7 +1349,7 @@
 
 (defn- sysops-rejection [thunk]
   (try (thunk) nil
-       (catch clojure.lang.ExceptionInfo e (ex-message e))))
+       (catch kerror/ExceptionInfo e (ex-message e))))
 
 (deftest sysops-kernel-operations-are-admitted-with-their-own-arities
   (doseq [[form arity] [['(kernel-atomic-add-u32 p0 p1 p2 p3) 4]
@@ -1556,7 +1556,7 @@
                 (quote (kernel-in-u8 233))]]
     (testing (str body " is refused for x86_64-kotoba-v1")
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo
+           kerror/ExceptionInfo
            #"bounded kernel memory operation requires the aiueos kernel target"
            (kotoba.verifier/verify-artifact!
             (privileged-artifact :x86_64-kotoba-v1 (privileged-kir body))))))))
@@ -1590,7 +1590,7 @@
     ;; table in a kernel image. If a later change removed the pair wholesale
     ;; rather than the one head that was measured, this is what goes red.
     (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
+         kerror/ExceptionInfo
          #"bounded kernel memory operation requires the aiueos kernel target"
          (kotoba.verifier/verify-artifact!
           (privileged-artifact :x86_64-kotoba-v1
@@ -1637,7 +1637,7 @@
 
 (defn- memwidth-verifies? [body]
   (try (#'kotoba.verifier/verify-program! (memwidth-kexe body)) true
-       (catch clojure.lang.ExceptionInfo _ false)))
+       (catch kerror/ExceptionInfo _ false)))
 
 (deftest memwidth-every-width-and-tier-passes-the-verifier
   (let [widths ["u8" "u16" "u32" "u64"]
@@ -1862,7 +1862,7 @@
            ['(ucs2) "runtime KIR rodata literal arity rejected"]]]
     (testing (str body)
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo (re-pattern message)
+           kerror/ExceptionInfo (re-pattern message)
            (boot-lit-verify! body))
           (str body))))
   (testing "and each is ADMITTED at its own arity"
@@ -1890,7 +1890,7 @@
             "runtime KIR rodata literal is malformed for its encoding"]]]
     (testing (str body)
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo (re-pattern message)
+           kerror/ExceptionInfo (re-pattern message)
            (boot-lit-verify! body))
           (str body))))
   (testing "and a well-formed one passes the same check"

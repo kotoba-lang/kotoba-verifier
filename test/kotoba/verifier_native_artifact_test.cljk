@@ -23,7 +23,7 @@
   (:require [kotoba.test :as t :refer [deftest is testing]]
             [kotoba.lang.edn :as edn]
             [kotoba.verifier :as verifier]
-            #?(:clj [clojure.java.io :as io])
+            #?(:clj [kotoba.io :as io])
             #?(:cljs ["node:fs" :as fs])
             #?(:cljs ["node:path" :as path])))
 

@@ -16,7 +16,7 @@
 
 (defn- rejection [body]
   (try (#'kotoba.verifier/verify-program! (program body)) nil
-       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e (ex-message e))))
+       (catch :default e (ex-message e))))
 
 (def ^:private bytes-of '(bytes-from-vector-i64 (vector-new 104 105)))
 
