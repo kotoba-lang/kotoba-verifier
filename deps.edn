@@ -161,7 +161,12 @@
          ;; 26, behind 0, forward only): `kotoba.native.linux-static`, the
          ;; packager `kotoba.verifier.linux-static` re-runs to re-derive a
          ;; static ELF (superproject adr-2609251400 C2).
-         :git/sha "27228973a0c0b615f79ccdf5ea4e61fdcf3d433d"}
+         ;; Advanced 2026-09-25, 27228973 -> d8f668cd (kotoba-native main, ahead
+         ;; 2, behind 0, forward only): the packager's capability handlers and
+         ;; its options map (:handlers :grant :fs-scope), which
+         ;; `verify-image!` now passes through to re-derive an image with
+         ;; effects (adr-2609251400 C3).
+         :git/sha "d8f668cd6625f535c2ab1d3e388cb97c9bbc969f"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}

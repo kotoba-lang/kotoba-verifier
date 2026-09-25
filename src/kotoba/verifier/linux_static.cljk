@@ -67,19 +67,42 @@
   (or (first (filter #(not= (nth a %) (nth b %)) (range (min (count a) (count b)))))
       (min (count a) (count b))))
 
+(defn- granted-ids
+  "The wire ids whose bits are set in the 256-bit allow mask at `offset`."
+  [bytes offset]
+  (set (for [i (range 32) b (range 8)
+             :when (odd? (quot (nth bytes (+ offset i)) (nth [1 2 4 8 16 32 64 128] b)))]
+         (+ (* 8 i) b))))
+
 (defn verify-image!
   "Verify `image` (the bytes `amu compile --target *-linux-static` wrote) as
   the static ELF of `artifact` under `profile` (`(:profile/native
-  limits-table)`). Returns a report; refuses with `:phase :verify` and a
-  `:reason`."
-  [artifact image profile]
+  limits-table)`) and `options` -- what it was packaged with: the sealed
+  handler-decision artifacts, and the grant and fs scope the compile policy
+  named (superproject adr-2609251400 C3). Returns a report; refuses with
+  `:phase :verify` and a `:reason`.
+
+  With capability effects, three more things are re-derived rather than
+  read: each handler artifact's code from ITS closed program
+  (`verify-artifact!`, as for the guest), and the image must carry exactly
+  those bytes where the layout puts them; and the grant sealed in the
+  context's allow mask must be a subset of the effects the artifact declares
+  (the compile policy admitted each of those), independently of the packager
+  that wrote it."
+  ([artifact image profile] (verify-image! artifact image profile {}))
+  ([artifact image profile options]
   (verifier/verify-artifact! artifact)
+  (doseq [[which handler] (:handlers options)]
+    (try (verifier/verify-artifact! handler)
+         (catch :default e
+           (refuse "a linux-static handler artifact does not verify"
+                   {:reason :handler-artifact :handler which :cause (ex-message e)}))))
   (let [target (:target artifact)
         machine (get machines target)
         _ (when-not machine
             (refuse "not a linux-static artifact" {:reason :not-linux-static :target target}))
         image (mapv #(bit-and (num %) 0xff) image)
-        expected (linux-static/package artifact profile)
+        expected (linux-static/package artifact profile options)
         want (:bytes expected)]
     (when-not (= want image)
       (refuse "static ELF does not re-derive from its artifact and the native profile"
@@ -113,7 +136,20 @@
         (refuse "static ELF context is not ABI v11" {:reason :context-version}))
       (when-not (= (num (get-in artifact [:fuel-abi :initial])) (u image (+ context-offset fuel-offset) 8))
         (refuse "static ELF fuel word is not the artifact's" {:reason :fuel-word}))
+      (let [effects (set (map #(num (second %)) (:effects artifact)))
+            granted (granted-ids image (+ context-offset
+                                          (num (get-in artifact [:context-abi :allow-bitmap-offset]))))]
+        (when-let [wider (seq (remove effects granted))]
+          (refuse "static ELF grants a capability its artifact does not declare"
+                  {:reason :grant-widens-effects :wire-ids (vec (sort wider))})))
+      (doseq [{:keys [which address size]} (:decision-code expected)]
+        (let [code (mapv #(bit-and (num %) 0xff) (:code (get (:handlers options) which)))]
+          (when-not (and (= size (count code)) (= code (subvec image address (+ address size))))
+            (refuse "static ELF does not carry the handler decision code" {:reason :handler-code-bytes
+                                                                          :handler which}))))
       {:ok true :target target :bytes (count image)
        :code-offset code-offset :code-bytes (count code)
        :prelude-bytes (:prelude-size expected)
-       :budgets (:budgets expected) :fuel (:fuel expected) :slots (:slots expected)})))
+       :budgets (:budgets expected) :fuel (:fuel expected) :slots (:slots expected)
+       :grant (:grant expected) :fs-scope (:fs-scope expected)
+       :decision-code (:decision-code expected)}))))
