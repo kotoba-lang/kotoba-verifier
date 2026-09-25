@@ -43,7 +43,10 @@
    :cells {:trap :budget/cells :default {:value 4096} :pair-arena-max {:value 67108864}}
    :bytes {:trap :budget/bytes :default {:value 65536} :max {:value 1073741824}}
    :static-elf {:admitted-slots {:value [:pair-new :pair-first :pair-second :string-equal
-                                         :string-concat :string-substring :string-index-of]}
+                                         :string-concat :string-substring :string-index-of
+                                         :typed-cap-call]}
+                :capability-handlers {:value {7 :clock/now 33 :env/read 34 :fs/browse 35 :fs/app-data
+                                              37 :io/write 38 :cli/args 39 :io/write-error 41 :io/read}}
                 :unimplemented-slot-trap :slot/unimplemented
                 :exit-codes {:value {:ok 0 :trap/signal 120 :budget/fuel 122 :budget/cells 123
                                      :budget/bytes 124 :slot/unimplemented 125}}}})
@@ -82,3 +85,51 @@
     (testing "a kexe artifact is not a static ELF"
       (is (= :not-linux-static
              (reason #(verifier/verify-image! (read-fixture "aarch64-demo.kexe") image profile)))))))
+
+;; C3 (superproject adr-2609251400): a program with capability effects. The
+;; fixture is a two-effect program (:io/write 37, :cli/args 38) compiled by amu
+;; to aarch64-linux-static with --artifact object, and the two decision
+;; artifacts amu compiles for aarch64 from tools/kexe_loader_decisions.kotoba
+;; and tools/linux_static_handlers.kotoba (the text of amu's
+;; kotoba.compiler.linux-static-handlers). Execution is amu
+;; scripts/test-linux-static-handlers.cljk's, on Linux, against kexe + loader.
+;;
+;; Read WITHOUT `guest-numbers`: that walk makes every integer a bigint, and
+;; amu's reader does not -- it narrows the structural indexes back
+;; (cli-support `narrow-structural-indexes`), among them the effect wire ids.
+;; Walked, the effect set of this fixture no longer equals the one its
+;; program derives and the artifact is refused ("runtime KIR function effects
+;; rejected", measured 2026-09-25), which is a fact about the walk, not the
+;; verifier. The packager here is handed what amu's compile hands it.
+(defn- read-plain [name]
+  (edn/read-string
+   #?(:clj (slurp (io/resource (str "fixtures/" name)))
+      :cljs (fs/readFileSync (path/join "resources" "fixtures" name) "utf8"))))
+
+(deftest a-static-elf-with-handlers-re-derives-their-code-too
+  (let [artifact (read-plain "aarch64-linux-static-io.kexe")
+        options {:handlers {:decisions (read-plain "aarch64-kexe-loader-decisions.kexe")
+                            :handlers (read-plain "aarch64-linux-static-handlers.kexe")}}
+        packaged (linux-static/package artifact profile options)
+        image (:bytes packaged)
+        report (verifier/verify-image! artifact image profile options)]
+    (testing "the packaged image verifies, with its grant and its decision code"
+      (is (:ok report))
+      (is (= [37 38] (:grant report)))
+      (is (= :implemented (get-in report [:slots :typed-cap-call])))
+      (is (= [:decisions :handlers] (mapv :which (:decision-code report)))))
+    (testing "one byte of the handler decision code"
+      (let [at (:address (first (:decision-code report)))]
+        (is (= :image-not-rederived
+               (reason #(verifier/verify-image! artifact (update image at bit-xor 1) profile options))))))
+    (testing "one more bit in the sealed allow mask"
+      (is (= :image-not-rederived
+             (reason #(verifier/verify-image! artifact (update image (+ (:data-offset packaged) 16 4) bit-or 0x80)
+                                              profile options)))))
+    (testing "a handler artifact whose code is not its program's"
+      (is (= :handler-artifact
+             (reason #(verifier/verify-image! artifact image profile
+                                              (update-in options [:handlers :handlers :code] (comp vec reverse)))))))
+    (testing "the image of a narrower grant is not the image of this one"
+      (is (= :image-not-rederived
+             (reason #(verifier/verify-image! artifact image profile (assoc options :grant #{37}))))))))
