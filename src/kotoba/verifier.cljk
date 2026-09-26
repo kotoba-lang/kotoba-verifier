@@ -111,7 +111,10 @@
            kernel-dequant-dot-iq4-xs 5
            kernel-dequant-dot-iq2-s 5
            kernel-dequant-dot-iq3-xxs 5
-           kernel-dequant-dot-iq3-s 5}))
+           kernel-dequant-dot-iq3-s 5
+           ;; dequant-ptq1: PTQ1_0 (kotoba-gmir ADR 0031). Same arity; its
+           ;; code is a base-3 digit and needs no table at all.
+           kernel-dequant-dot-ptq1-0 5}))
 
 (defn- reject! [message data]
   (throw (ex-info message (assoc data :phase :verify))))
@@ -2587,7 +2590,9 @@
                              kernel-dequant-dot-iq4-xs
                              kernel-dequant-dot-iq2-s
                              kernel-dequant-dot-iq3-xxs
-                             kernel-dequant-dot-iq3-s}))
+                             kernel-dequant-dot-iq3-s
+                             ;; dequant-ptq1: and PTQ1_0, same two regions.
+                             kernel-dequant-dot-ptq1-0}))
 
 
 ;; ── granted regions: the one memory family a NON-aiueos native target gets ──
