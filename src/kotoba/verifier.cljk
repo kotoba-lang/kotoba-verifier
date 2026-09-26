@@ -296,7 +296,13 @@
 ;; the count mod 64 where `kotoba.kir`'s evaluator traps. A verifier that
 ;; admitted a non-literal or out-of-range count would therefore admit an
 ;; artifact whose code and whose sealed oracle value disagree.
-(def ^:private i64-operations '{bit-not 1 i64-shift-left 2 i64-shift-right 2 u64-shift-right 2})
+;; `min` / `max` joined 2026-09-26 (superproject adr-2609242330): the frontend's
+;; table has declared them strictly binary all along and this copy never
+;; carried them -- `bit-or`'s drift above, in the same safe direction, so every
+;; native artifact using either was refused here (or, before this verifier ran,
+;; by the native gate). They carry no operand restriction.
+(def ^:private i64-operations '{bit-not 1 i64-shift-left 2 i64-shift-right 2 u64-shift-right 2
+                                min 2 max 2})
 ;; `kotoba.compiler.frontend/i32-operations`, independently re-derived like the
 ;; sets above. `xorshift32` is absent on purpose: the frontend desugars it into
 ;; a `let` over these, so it never survives into KIR.
@@ -525,7 +531,13 @@
     ;; evaluates them identically, so a different shape here would make the
     ;; bang a different operation. Neither has an f64 twin, because KIR
     ;; declares none.
-    vector-alloc 1 vector-assoc! 3})
+    vector-alloc 1 vector-assoc! 3
+    ;; `vector-take` (the head mirror of `vector-drop`, which is how the
+    ;; frontend spells `pop`) and its f64 twin: declared in KIR and evaluated
+    ;; by the reference, but never listed here, so any artifact that popped a
+    ;; vector was refused. Same arity and same [0, count] bound as the drop.
+    ;; Added 2026-09-26 (superproject adr-2609242330, selfhost stage 2).
+    vector-take 2 vector-f64-take 2})
 
 ;; `:bytes` (2026-09-25, superproject adr-2609242330, context ABI v11). The
 ;; language's byte string, admitted with its KIR arities on the same stance as
