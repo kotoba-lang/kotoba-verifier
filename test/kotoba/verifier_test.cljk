@@ -1718,14 +1718,16 @@
   ;; third base and nothing about this layer changes.
   '[kernel-dequant-dot-q8-0 kernel-dequant-dot-q4-k kernel-dequant-dot-q6-k
     kernel-dequant-dot-iq4-xs kernel-dequant-dot-iq2-s
-    kernel-dequant-dot-iq3-xxs kernel-dequant-dot-iq3-s])
+    kernel-dequant-dot-iq3-xxs kernel-dequant-dot-iq3-s
+    ;; dequant-ptq1: the eighth, PTQ1_0 (kotoba-gmir ADR 0031).
+    kernel-dequant-dot-ptq1-0])
 
-(deftest the-fused-dequant-dot-family-is-seven-formats
+(deftest the-fused-dequant-dot-family-is-eight-formats
   ;; A row added to the arity table and not to the native-operations set (or
   ;; the reverse) is the failure this counts: the first rejects by absence
   ;; with "runtime KIR operation rejected", the second lets the compile-time
   ;; oracle try to fold a read of memory it was never given.
-  (is (= 7 (count dequant-dot-heads)))
+  (is (= 8 (count dequant-dot-heads)))
   (doseq [head dequant-dot-heads]
     (is (contains? @#'kotoba.verifier/kernel-native-operations head) (str head))))
 
