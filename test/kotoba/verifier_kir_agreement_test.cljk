@@ -175,3 +175,18 @@
                      :result :i64 :effects #{} :body 0}]}]
       (is (some? (@#'kotoba.verifier/verify-program! program))
           "no refusal: verify-program! returns the program it accepted"))))
+
+;; ── the export boundary codec types ─────────────────────────────────────────
+;;
+;; Handle types an EXPORT may take and return because the kexe loader's
+;; boundary codec builds and decodes them (superproject adr-2609242330). A
+;; type the oracle admits and the verifier does not is a green `amu check`
+;; followed by `:error :verify`; the reverse would be a verifier looser than
+;; the oracle. Both are drift, named here.
+(deftest the-two-export-codec-type-sets-agree
+  (let [oracle kir/native-export-codec-types
+        verifier kotoba.verifier/native-export-codec-types]
+    (is (pos? (count oracle)) (str "SCANNED " (count oracle) " oracle codec types"))
+    (is (= oracle verifier)
+        (str "export codec type drift -- kotoba.kir has " (pr-str (sort oracle))
+             " and the verifier has " (pr-str (sort verifier))))))

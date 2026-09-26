@@ -1,5 +1,5 @@
 (ns kotoba.verifier
-  {:kotoba/export [*call-results* guest-integer? max-expression-nodes max-functions max-lowered-nodes native-float-boundary-types target-contracts verify-artifact!]}
+  {:kotoba/export [*call-results* guest-integer? max-expression-nodes max-functions max-lowered-nodes native-export-codec-types native-float-boundary-types target-contracts verify-artifact!]}
   #?(:clj (:require [kotoba.lang.coll :as set]
                     [kotoba.artifact.core :as artifact]
                     ;; boot-lit: the single decoder for a read-only literal.
@@ -2107,8 +2107,19 @@
   (when (and (vector? type) (seq type))
     (get erased-source-carrier-types (first type))))
 
+(def native-export-codec-types
+  "Context-owned handle types an EXPORT may take and return: the kexe loader's
+  boundary codec (amu tools/kexe_loader.c, rules compiled from
+  tools/kexe_loader_decisions.kotoba) builds them from a typed wire form,
+  validates them against the boundary traversal budget, refuses a bare word
+  in their slot as :boundary/forged-handle, and decodes a result back out of
+  the arena (superproject adr-2609242330). An INDEPENDENT copy of
+  `kotoba.kir/native-export-codec-types`; the agreement test compares them."
+  #{:vector-i64 :bytes})
+
 (defn- native-function-boundary-type? [type exported?]
   (or (native-boundary-type? type)
+      (contains? native-export-codec-types type)
       (and (not exported?)
            (or (native-private-handle-type? type)
                ;; ABI v8: a recursive/generic aggregate handle crosses an

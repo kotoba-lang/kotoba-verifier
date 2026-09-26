@@ -75,7 +75,12 @@
          ;; forward only): the x86_64/aarch64-linux-static target profiles
          ;; (superproject adr-2609251400 C2), which verify-artifact! resolves
          ;; for the static ELF's artifact.
-         :git/sha "e46766f7c09ea3c0c5913524c40ad6049f578d06"}
+         ;; Advanced 2026-09-26, e46766f7 -> a8977bee (osaho main, forward only):
+         ;; a8977bee exports `native-export-codec-types`, the set of handle
+         ;; types a kexe export may take and return through amu's loader
+         ;; boundary codec; `kotoba.verifier-kir-agreement-test` compares it
+         ;; against this repo's own copy (superproject adr-2609242330).
+         :git/sha "a8977beed9018a8d56047c20bdc6a9ea6065fdd7"}
         io.github.kotoba-lang/artifact
         {:git/url "https://github.com/kotoba-lang/artifact.git"
          :git/sha "ba29522ece748d2f7ff420d2ba45b1126c94baf8"}

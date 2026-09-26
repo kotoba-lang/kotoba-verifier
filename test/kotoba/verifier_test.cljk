@@ -768,15 +768,18 @@
         "the table must still be a vector")))
 
 (deftest native-vector-parameters-are-private-function-boundaries-only
-  (doseq [vector-type [:vector-i64 :vector-f64]]
+  (doseq [vector-type [:vector-i64 :vector-f64 :bytes]]
     (testing (name vector-type)
       (let [private-helper (-> (with-param-types [vector-type])
-                               (assoc-in [:functions 1 :result] vector-type))]
+                               (assoc-in [:functions 1 :result] vector-type))
+            exported (update private-helper :exports conj 'helper)]
         (is (false? (function-rejected? private-helper))
             "a private native call carries the context-owned handle as one word")
-        (is (true? (function-rejected?
-                    (update private-helper :exports conj 'helper)))
-            "copy ABI v1 still cannot accept a vector handle parameter")))))
+        (if (= :vector-f64 vector-type)
+          (is (true? (function-rejected? exported))
+              ":vector-f64 has no loader wire form and stays private")
+          (is (false? (function-rejected? exported))
+              "the loader's boundary codec builds and decodes :vector-i64 / :bytes"))))))
 
 (deftest native-vector-results-have-a-non-entry-export-copy-boundary
   (doseq [vector-type [:vector-i64 :vector-f64]]
@@ -793,7 +796,8 @@
             "entry results remain outside copy ABI v1 at the module boundary")))))
 
 (deftest native-vector-export-copy-v1-is-zero-arity
-  (doseq [vector-type [:vector-i64 :vector-f64]]
+  ;; :vector-i64 crosses through the boundary codec with parameters now.
+  (doseq [vector-type [:vector-f64]]
     (let [exported-result (-> (with-param-types [:i64])
                               (assoc-in [:functions 1 :result] vector-type)
                               (update :exports conj 'helper))]
