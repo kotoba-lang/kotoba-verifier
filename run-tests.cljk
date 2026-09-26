@@ -25,7 +25,9 @@
             ;; :bytes and the string constructor (context ABI v11)
             [kotoba.verifier-bytes-value-test]
             ;; the loader-less Linux static ELF (adr-2609251400 C2)
-            [kotoba.verifier-linux-static-test]))
+            [kotoba.verifier-linux-static-test]
+            ;; native :document operations (selfhost foundation gap 2)
+            [kotoba.verifier-document-operations-test]))
 
 (defmethod t/report [:cljs.test/default :end-run-tests] [m]
   (println (str "\nnbb: " (:test m) " tests, " (:pass m) " passed, "
@@ -51,4 +53,5 @@
              'kotoba.verifier-arena-scope-test
              'kotoba.verifier-recursive-adt-test
              'kotoba.verifier-bytes-value-test
-             'kotoba.verifier-linux-static-test)
+             'kotoba.verifier-linux-static-test
+             'kotoba.verifier-document-operations-test)
