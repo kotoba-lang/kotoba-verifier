@@ -1147,6 +1147,21 @@
                                                    (handle-type-of value env))))))
       env)))
 
+(def ^:private document-operations
+  "Native document operations and their arity (a number, :any, :even or
+  :some). Not here, so refused as unknown: document-f64, document-f64-value,
+  document-sha256, document-print, document-read."
+  '{document-null 0 document-bool 1 document-i64 1 document-string 1
+    document-keyword 1 document-symbol 1
+    document-vector :any document-list :any document-set :any document-map :even
+    document-count 1 document-kind 1 document-equal? 2 document-set-contains? 2
+    document-contains 2 document-get 2 document-vector-at 2 document-list-at 2
+    document-map-entry-at 2 document-vector-assoc 3 document-vector-conj 2
+    document-vector-drop 2 document-vector-remove 2 document-vector-sort 1
+    document-assoc 3 document-dissoc 2 document-merge :some
+    document-string-value 1 document-keyword-value 1 document-symbol-value 1
+    document-bool-value 1 document-i64-value 1})
+
 (defn- verify-expr! [form locals signatures depth nodes facts]
   (when (> (vswap! nodes inc) max-expression-nodes)
     (reject! "runtime KIR expression budget exhausted" {}))
@@ -1494,11 +1509,28 @@
             (reject! "runtime KIR kgraph operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
+        ;; Native `:document` (gap 2 of the selfhost foundation, superproject
+        ;; adr-2609242330): a string-shaped handle over the document's
+        ;; canonical EDN text, and every operation below is kotoba-native's
+        ;; rewrite onto the string slots and its emitted helpers
+        ;; (`kotoba.native.document`) -- the code bytes this verifier
+        ;; re-derives. Its own table, re-derived here rather than read from
+        ;; the backend, as `string-operations` is. The two EDN casts keep
+        ;; their old message.
         (contains? '#{document-edn-read document-edn-print} op)
         (do
           (when-not (= 1 (count args))
             (reject! "runtime KIR document-edn operation arity rejected"
                      {:operation op}))
+          (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        (contains? document-operations op)
+        (let [arity (get document-operations op)]
+          (when-not (cond (= :even arity) (even? (count args))
+                          (= :any arity) (<= (count args) 64)
+                          (= :some arity) (<= 1 (count args) 64)
+                          :else (= arity (count args)))
+            (reject! "runtime KIR document operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
         (contains? string-operations op)
