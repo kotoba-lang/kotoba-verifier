@@ -194,12 +194,13 @@
                        (assoc-in [:program :effects] #{:states}))]
       (is (= "native artifact contains an unsupported effect"
              (:message (outcome misspelt))))))
-  (testing "the tracked control effect :abort is NOT admitted by the same door"
+  (testing "an :abort row no function declares is a module-row mismatch, not a pass"
     (let [aborting (-> (state-fixture)
                        (assoc :effects #{:abort})
                        (assoc-in [:program :effects] #{:abort}))]
-      (is (= "native artifact contains an unsupported effect"
-             (:message (outcome aborting))))))
+      (is (= :refused (:decision (outcome aborting))))
+      (is (not= "native artifact contains an unsupported effect"
+                (:message (outcome aborting))))))
   (testing "a function row that claims :state its body cannot show is still a
             function row the verifier re-derives: dropping :state from the
             module row alone is a module-row mismatch"
@@ -208,3 +209,45 @@
                        (assoc :effects #{})
                        (assoc-in [:program :effects] #{}))]
       (is (= :refused (:decision (outcome stripped)))))))
+
+;; ---------------------------------------------------------------------------
+;; The abort ability (kotoba-lang lang/abort-ability.edn), natively (gap 4 of
+;; the selfhost foundation, superproject adr-2609242330)
+
+(defn- abort-fixture []
+  ;; Compiled to aarch64-macos by amu with this verifier and osaho at the
+  ;; commit that admits :abort. Source (the module row is #{:abort}):
+  ;;   parse throws :parse/negative, read calls it without a try (E =
+  ;;   keyword through a caller); find-over throws an i64 from a loop body;
+  ;;   nested rethrows a string from its inner handler. main catches all of
+  ;;   them and answers 432060713 on the reference, restricted ESM, Wasm and
+  ;;   the loader on aarch64 and x86_64 (Rosetta).
+  (read-fixture "aarch64-abort-chain.kexe"))
+
+(deftest an-abort-row-is-verified-not-refused-by-name
+  (let [artifact (abort-fixture)]
+    (is (= #{:abort} (set (:effects artifact))) "the fixture carries the abort ability")
+    (let [{:keys [decision message value]} (outcome artifact)]
+      (is (= :admitted decision) (str decision ": " message))
+      (is (map? value)))))
+
+(deftest an-abort-row-is-still-checked
+  (testing "its sealed value is part of the artifact: a changed answer is refused
+            before the oracle is asked (the admitted run above is the oracle
+            re-deriving the true one)"
+    (is (= "artifact integrity mismatch"
+           (:message (outcome (assoc (abort-fixture) :value
+                                     #?(:clj 432060714 :cljs (js/BigInt 432060714)))))))
+    (is (= 432060713 #?(:clj (:value (abort-fixture)) :cljs (js/Number (:value (abort-fixture)))))
+        "the fixture's sealed answer is the one every backend gave"))
+  (testing "dropping :abort from the module row alone is a module-row mismatch"
+    (let [stripped (-> (abort-fixture)
+                       (assoc :effects #{})
+                       (assoc-in [:program :effects] #{}))]
+      (is (= :refused (:decision (outcome stripped))))))
+  (testing "a keyword that is not a pure ability is still refused by name"
+    (let [misspelt (-> (abort-fixture)
+                       (assoc :effects #{:aborts})
+                       (assoc-in [:program :effects] #{:aborts}))]
+      (is (= "native artifact contains an unsupported effect"
+             (:message (outcome misspelt)))))))

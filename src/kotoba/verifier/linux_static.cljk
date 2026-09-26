@@ -138,7 +138,13 @@
         (refuse "static ELF context is not ABI v11" {:reason :context-version}))
       (when-not (= (num (get-in artifact [:fuel-abi :initial])) (u image (+ context-offset fuel-offset) 8))
         (refuse "static ELF fuel word is not the artifact's" {:reason :fuel-word}))
-      (let [effects (set (map #(num (second %)) (:effects artifact)))
+      ;; The capability calls only: a pure ability (:state, :abort) is a row
+      ;; member with no wire id and no grant bit (kotoba-native linux-static
+      ;; `pure-ability-effects`; gap 4 of the selfhost foundation, 2026-09-26
+      ;; -- `(num (second :abort))` was a host TypeError here).
+      (let [effects (into #{} (keep (fn [e] (when (and (vector? e) (= :cap/call (first e)))
+                                               (num (second e)))))
+                          (:effects artifact))
             granted (granted-ids image (+ context-offset
                                           (num (get-in artifact [:context-abi :allow-bitmap-offset]))))]
         (when-let [wider (seq (remove effects granted))]

@@ -799,7 +799,18 @@
 ;; state passing, naming no host authority. It is not re-derivable from the
 ;; lowered body -- there is no operation left to see -- so the checks below
 ;; re-derive the capability part of each row and admit `:state` beside it.
-(def ^:private pure-ability-effects #{:state})
+;; `:abort` (kotoba-lang `lang/abort-ability.edn`) joined it 2026-09-26 (gap 4
+;; of the selfhost foundation, superproject adr-2609242330): the frontend
+;; lowers every throw / try to `[:result T E]` values before KIR exists, so an
+;; aborting function is an ordinary function returning a result -- nothing
+;; unwinds, and the ability names no host authority. Like `:state` it is not
+;; re-derivable from the lowered body (there is no operation left to see); the
+;; result values themselves are checked as any program's are, and the native
+;; oracle re-executes them (osaho seals a value for an :abort row since the
+;; same day). Measured on aarch64-macos and x86_64 (Rosetta): a keyword error
+;; through a caller, an i64 thrown from a loop body, a string rethrown from a
+;; nested handler -- the reference, restricted ESM, Wasm and both ISAs agree.
+(def ^:private pure-ability-effects #{:state :abort})
 
 (defn- valid-effect? [effect]
   (or (contains? pure-ability-effects effect)
@@ -3116,9 +3127,9 @@
   ;; the frontend lowered it to state passing -- plain calls, let and records,
   ;; which the rest of this verifier re-checks as it checks any program -- and
   ;; its handler is code inside this artifact. It names no host authority, so
-  ;; there is nothing for the capability bitmap to carry. `:abort` stays
-  ;; refused here: its native qualification has not been measured.
-  (when-not (every? #(or (= :state %)
+  ;; there is nothing for the capability bitmap to carry. `:abort` is admitted
+  ;; the same way since 2026-09-26 (see `pure-ability-effects`).
+  (when-not (every? #(or (contains? pure-ability-effects %)
                          (and (vector? %) (= :cap/call (first %))
                               (= 2 (count %))
                               (guest-integer? (second %))
