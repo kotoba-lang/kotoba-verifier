@@ -656,6 +656,9 @@
                    :set (and (= 2 (count type))
                              (or (native-word-value-type? (second type) (inc depth))
                                  (native-scalar-record-type? (second type))))
+                   :list (and (= 2 (count type))
+                              (or (native-word-value-type? (second type) (inc depth))
+                                  (native-scalar-record-type? (second type))))
                    :result (and (= 3 (count type))
                                 (native-word-value-type? (second type) (inc depth))
                                 (native-word-value-type? (nth type 2) (inc depth)))
@@ -867,6 +870,15 @@
     (let [[_ _type value item] form]
       (bounded-sum [1 (lowered-cost value env) (lowered-cost item env)]))
     (and (seq? form) (contains? '#{typed-set-count typed-set-nth} (first form)))
+    (let [[_ _type & rest] form]
+      (bounded-sum (cons 1 (map #(lowered-cost % env) rest))))
+    (and (seq? form) (= 'typed-list-new (first form)))
+    (let [[_ _type & items] form]
+      (bounded-sum (cons 1 (map #(lowered-cost % env) items))))
+    (and (seq? form) (= 'typed-list-conj (first form)))
+    (let [[_ _type value item] form]
+      (bounded-sum [1 (lowered-cost value env) (lowered-cost item env)]))
+    (and (seq? form) (= 'typed-list-nth (first form)))
     (let [[_ _type & rest] form]
       (bounded-sum (cons 1 (map #(lowered-cost % env) rest))))
     (and (seq? form)
@@ -1557,6 +1569,37 @@
                          (native-word-value-type? type)
                          (seq rest))
             (reject! "runtime KIR typed-set operation rejected" {:operation op}))
+          (doseq [arg rest]
+            (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        ;; `[:list T]` is the same word arena as `[:set T]` on native.
+        (= op 'typed-list-new)
+        (let [[type & items] args]
+          (when-not (and (vector? type) (= :list (first type))
+                         (native-word-value-type? type))
+            (reject! "runtime KIR typed-list constructor rejected" {:operation op}))
+          (when (> (count items) max-vector-literal-items)
+            (reject! "runtime KIR typed-list literal exceeds the item limit"
+                     {:operation op :items (count items)
+                      :limit max-vector-literal-items}))
+          (doseq [item items]
+            (verify-expr! item locals signatures (inc depth) nodes facts)))
+
+        (= op 'typed-list-conj)
+        (let [[type value item] args]
+          (when-not (and (= 3 (count args))
+                         (vector? type) (= :list (first type))
+                         (native-word-value-type? type))
+            (reject! "runtime KIR typed-list conj rejected" {:operation op}))
+          (verify-expr! value locals signatures (inc depth) nodes facts)
+          (verify-expr! item locals signatures (inc depth) nodes facts))
+
+        (= op 'typed-list-nth)
+        (let [[type & rest] args]
+          (when-not (and (= 3 (count args))
+                         (vector? type) (= :list (first type))
+                         (native-word-value-type? type))
+            (reject! "runtime KIR typed-list nth rejected" {:operation op}))
           (doseq [arg rest]
             (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
