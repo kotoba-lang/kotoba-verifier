@@ -801,7 +801,11 @@
 ;; JVM-only, cljs has no `String`/`Charset`; `TextEncoder` is the
 ;; UTF-8-safe equivalent.
 (defn- utf8-byte-count [s]
-  #?(:clj (alength (kbytes/utf8-bytes ^String s))
+  ;; `alength` asks clojure.lang.RT to resolve the byte-array class by name.
+  ;; That class lookup is unavailable in a closed GraalVM Native Image even
+  ;; though the byte[] itself is present. `count` has identical semantics for
+  ;; this byte array and remains statically reachable in the native compiler.
+  #?(:clj (count (kbytes/utf8-bytes ^String s))
      :cljs (.-length (.encode (js/TextEncoder.) s))))
 
 (defn- valid-name? [value]
