@@ -12,209 +12,639 @@
   is deterministic, so the same key over the same value produces the same
   signature byte for byte on either host. `verifier-signing-parity-test`
   pins that with a fixed vector rather than trusting the sentence."
-  {:kotoba/export [generate-keypair sign sign-value signer-id trusted-signer-id! valid-key? valid-verification-key? validate-trust! verification-key verify verify-value]}
-  (:require [kotoba.bytes :as kbytes] [kotoba.lang.coll :as set]
-            [kotoba.artifact.core :as artifact]
-            [kotoba.verifier :as verifier])
+  {:kotoba/export #?(:kotoba [generate-keypair keypair-from-seed sign sign-message sign-value signer-id trusted-signer-id! valid-key? valid-verification-key? validate-trust! verification-key verify verify-message verify-signature-message verify-value]
+                     :default [generate-keypair sign sign-value signer-id trusted-signer-id! valid-key? valid-verification-key? validate-trust! verification-key verify verify-value])}
+  (:require [kotoba.bytes :as kbytes])
+  ;; The host requires are unchanged. The Kotoba route reads keys, statements,
+  ;; trust policies and envelopes as the recursive `:form/r` record (a .kexe is
+  ;; far past :document's bounds), verifies through the ported RFC 8032 and
+  ;; FIPS 180-4 modules, and takes the artifact verdict from the guest verifier
+  ;; twin.
+  #?(:kotoba (:require [kotoba.form :as form]
+                       [kotoba.verifier :as verifier]
+                       [kotoba.verifier.seal :as seal]
+                       [ed25519.core :as ed]
+                       [sha2.core :as sha2])
+     :default (:require [kotoba.lang.coll :as set]
+                        [kotoba.artifact.core :as artifact]
+                        [kotoba.verifier :as verifier]))
   #?(:clj (:import [java.security KeyFactory KeyPairGenerator Signature]
                    [java.security.spec PKCS8EncodedKeySpec X509EncodedKeySpec]
                    [java.util Base64])
-     :cljs (:require ["node:crypto" :as crypto])))
+     :cljs (:require ["node:crypto" :as crypto]))
+  #?(:kotoba (:schemas {:form/r [:record :form/r [[:tag :i64] [:s :string] [:n :i64] [:k :keyword]
+                                                  [:kids [:list [:ref :form/r]]] [:span :i64] [:data :bytes]]]})))
+
+;; ---- the Kotoba reading ------------------------------------------------------
+;;
+;; `#?(:kotoba A :default B)` gives Kotoba its own reading of a function; the
+;; hosts read B, byte for byte what they always did. The host reaches the
+;; platform's Ed25519 (JCA / node:crypto) and its base64; none of that exists on
+;; Kotoba, where the same functions run on the ported modules instead:
+;;
+;;   Ed25519 sign / verify   ed25519.core   (RFC 8032, over sha2.sha512)
+;;   SHA-256 (signer id)     sha2.core      (FIPS 180-4, pure)
+;;   base64                  kotoba.bytes   (`base64-decode-bytes` is the JDK's
+;;                           Base64 decoder transcribed: padding optional but
+;;                           exact when present, nothing off the alphabet)
+;;   canonical bytes         kotoba.verifier.seal/canonical-text over Form, the
+;;                           text `artifact/canonical-bytes` prints on the host
+;;   artifact verdict        kotoba.verifier (the guest twin, over Form)
+;;
+;; A key, a statement, a trust policy and an envelope are `:form/r` maps (a
+;; .kexe cannot be a bounded `:document`). A Kotoba function has no raise a
+;; caller can see, so where the host throws ex-info the Kotoba function TRAPS
+;; and the `-message` functions answer the host's message text ("" when
+;; accepted) for a caller that needs the reason: `sign-message`,
+;; `verify-signature-message` (every check but the final artifact verdict) and
+;; `verify-message` (all of them). `generate-keypair` draws its seed from the
+;; `entropy/draw` ability; `keypair-from-seed` is the same key from a caller's
+;; 32-byte seed.
+;;
+;; The DER envelopes are the fixed Ed25519 ones the JCA writes: the 12-byte
+;; SubjectPublicKeyInfo prefix + the 32-byte key, the 16-byte PKCS#8 prefix +
+;; the 32-byte seed. Any other encoding (a PKCS#8 with the optional public key,
+;; parameters on the algorithm) is refused, which is stricter than the JCA and
+;; never looser.
+
+#?(:kotoba
+   (defn- refuse-form [] [:ref :form/r]
+     (let [refused (assert (= 1 0))] (form/nil-form))))
+#?(:kotoba
+   (defn- refuse-string [] :string
+     (let [refused (assert (= 1 0))] "")))
+
+#?(:kotoba (defn- edn [text :string] [:ref :form/r] (form/edn-form text)))
+#?(:kotoba (defn- kw [k :keyword] [:ref :form/r] (form/keyword-form k)))
+#?(:kotoba
+   (defn- kw-is? [f [:ref :form/r] k :keyword] :bool
+     (and (form/is-keyword? f) (= (form/keyword-value f) k))))
+;; the value of key K in map M, nil when M is not a map or has no K
+#?(:kotoba
+   (defn- fld [m [:ref :form/r] k :keyword] [:ref :form/r]
+     (if (form/is-map? m) (form/form-get m (form/keyword-form k)) (form/nil-form))))
+
+;; 64 lowercase hex digits
+#?(:kotoba
+   (defn- hex-from? [s :string i :i64] :bool
+     (if (>= i 64)
+       true
+       (let [c (string-code-point-at s i)]
+         (if (or (and (>= c 48) (<= c 57)) (and (>= c 97) (<= c 102)))
+           (hex-from? s (+ i 1))
+           false)))))
+#?(:kotoba
+   (defn- hex64? [s :string] :bool
+     (if (= 64 (string-byte-length s)) (hex-from? s 0) false)))
+
+;; ---- sets over Form -----------------------------------------------------------
+#?(:kotoba
+   (defn- set-has-from? [s [:ref :form/r] x [:ref :form/r] i :i64] :bool
+     (if (>= i (form/count-of s))
+       false
+       (if (form/eq (form/nth-of s i) x) true (set-has-from? s x (+ i 1))))))
+#?(:kotoba
+   (defn- set-has? [s [:ref :form/r] x [:ref :form/r]] :bool
+     (set-has-from? s x 0)))
+;; every member of the set/vector S is a sha256 hex string
+#?(:kotoba
+   (defn- all-sha? [s [:ref :form/r] i :i64] :bool
+     (if (>= i (form/count-of s))
+       true
+       (if (sha256? (form/nth-of s i)) (all-sha? s (+ i 1)) false))))
+#?(:kotoba
+   (defn- sha-set? [s [:ref :form/r]] :bool
+     (if (form/is-set? s) (all-sha? s 0) false)))
+;; (or (not (contains? trust K)) (and (set? V) (every? sha256? V)))
+#?(:kotoba
+   (defn- opt-sha-set? [t [:ref :form/r] k :keyword] :bool
+     (if (form/form-has? t (form/keyword-form k))
+       (sha-set? (form/form-get t (form/keyword-form k)))
+       true)))
+;; every KEY of map M is a member of ALLOWED
+#?(:kotoba
+   (defn- keys-within? [m [:ref :form/r] allowed [:ref :form/r] j :i64] :bool
+     (if (>= (+ j 1) (form/count-of m))
+       true
+       (if (set-has? allowed (form/nth-of m j)) (keys-within? m allowed (+ j 2)) false))))
+;; every member of REQUIRED is a key of map M
+#?(:kotoba
+   (defn- keys-cover? [m [:ref :form/r] required [:ref :form/r] i :i64] :bool
+     (if (>= i (form/count-of required))
+       true
+       (if (form/form-has? m (form/nth-of required i)) (keys-cover? m required (+ i 1)) false))))
+
+#?(:kotoba
+   (defn- trust-ok? [t [:ref :form/r]] :bool
+     (and (form/is-map? t)
+          (keys-within? t (edn "#{:format :trusted-signers :revoked-signers :revoked-artifacts :trusted-runtime-sha256 :revoked-runtime-sha256}") 0)
+          (keys-cover? t (edn "#{:format :trusted-signers :revoked-signers :revoked-artifacts}") 0)
+          (kw-is? (fld t :format) :kotoba.trust/v1)
+          (sha-set? (fld t :trusted-signers))
+          (sha-set? (fld t :revoked-signers))
+          (sha-set? (fld t :revoked-artifacts))
+          (opt-sha-set? t :trusted-runtime-sha256)
+          (opt-sha-set? t :revoked-runtime-sha256))))
+
+;; ---- bytes ------------------------------------------------------------------------
+
+#?(:kotoba
+   (defn- spki-prefix [] :vector-i64
+     (vector-i64 0x30 0x2a 0x30 0x05 0x06 0x03 0x2b 0x65 0x70 0x03 0x21 0x00)))
+#?(:kotoba
+   (defn- pkcs8-prefix [] :vector-i64
+     (vector-i64 0x30 0x2e 0x02 0x01 0x00 0x30 0x05 0x06 0x03 0x2b 0x65 0x70 0x04 0x22 0x04 0x20)))
+
+#?(:kotoba
+   (defn- prefix-from? [der :vector-i64 prefix :vector-i64 i :i64] :bool
+     (if (>= i (vector-count prefix))
+       true
+       (if (= (vector-at der i) (vector-at prefix i)) (prefix-from? der prefix (+ i 1)) false))))
+#?(:kotoba
+   (defn- slice-of [v :vector-i64 from :i64 to :i64] :vector-i64
+     (loop [i from out (vector-i64)]
+       (if (>= i to) out (recur (+ i 1) (vector-conj out (vector-at v i)))))))
+;; the BODY bytes after exactly PREFIX, none for any other shape
+#?(:kotoba
+   (defn- unwrap-der [der :vector-i64 prefix :vector-i64 body :i64] [:option :vector-i64]
+     (let [n (vector-count prefix)]
+       (if (= (vector-count der) (+ n body))
+         (if (prefix-from? der prefix 0)
+           (option-some-of [:option :vector-i64] (slice-of der n (+ n body)))
+           (option-none-of [:option :vector-i64]))
+         (option-none-of [:option :vector-i64])))))
+#?(:kotoba
+   (defn- concat-bytes [a :vector-i64 b :vector-i64] :vector-i64
+     (loop [i 0 out a]
+       (if (>= i (vector-count b)) out (recur (+ i 1) (vector-conj out (vector-at b i)))))))
+
+;; UTF-8 of the text `artifact/canonical-bytes` prints for VALUE
+#?(:kotoba
+   (defn- canonical-bytes [value [:ref :form/r]] :vector-i64
+     (vector-i64-from-bytes (string-to-utf8 (seal/canonical-text value)))))
+
+;; the Ed25519 signature of MESSAGE under the seed inside KEY, base64
+#?(:kotoba
+   (defn- sign-bytes [skey [:ref :form/r] message :vector-i64] :string
+     (match-option (decode-private (form/string-value (fld skey :private-key))) [:option :vector-i64]
+       (none (refuse-string))
+       (some seed
+         (match-option (raw-sign seed message) [:option :vector-i64]
+           (none (refuse-string))
+           (some sig (b64 sig)))))))
+
+;; sha256 hex of the canonical text of {:algorithm :ed25519 :public-key P}
+#?(:kotoba
+   (defn- signer-id-of [public-key [:ref :form/r]] :string
+     (let [m0 (form/form-map (form/no-forms))
+           m1 (form/assoc-form m0 (kw :algorithm) (kw :ed25519))
+           m2 (form/assoc-form m1 (kw :public-key) public-key)]
+       (sha2/sha256-hex (vector-i64-from-bytes (string-to-utf8 (seal/canonical-text m2)))))))
+;; (= SIGNER (signer-id PUBLIC)) with both known to be strings
+#?(:kotoba
+   (defn- signer-matches? [signer [:ref :form/r] public-key [:ref :form/r]] :bool
+     (and (form/is-string? signer)
+          (form/is-string? public-key)
+          (string=? (form/string-value signer) (signer-id-of public-key)))))
+#?(:kotoba
+   (defn- public-decodes? [encoded :string] :bool
+     (match-option (decode-public encoded) [:option :vector-i64]
+       (none false)
+       (some public true))))
+
+;; The key for a 32-byte seed, in the envelopes `generate-keypair` writes on the
+;; hosts (JCA: X.509 SPKI public, PKCS#8 private, base64). A seed of another
+;; length has no key.
+#?(:kotoba
+   (defn keypair-from-seed [seed :vector-i64] [:ref :form/r]
+     (match-option (ed/pubkey-from-seed seed) [:option :vector-i64]
+       (none (refuse-form))
+       (some public
+         (let [public-b64 (b64 (concat-bytes (spki-prefix) public))
+               private-b64 (b64 (concat-bytes (pkcs8-prefix) seed))
+               m0 (form/form-map (form/no-forms))
+               m1 (form/assoc-form m0 (kw :format) (kw :kotoba.signing-key/v1))
+               m2 (form/assoc-form m1 (kw :algorithm) (kw :ed25519))
+               m3 (form/assoc-form m2 (kw :signer) (form/string-form (signer-id public-b64)))
+               m4 (form/assoc-form m3 (kw :public-key) (form/string-form public-b64))]
+           (form/assoc-form m4 (kw :private-key) (form/string-form private-b64)))))))
+
+;; ---- the messages (the host's ex-info texts, "" when accepted) ------------------
+;; sign: the artifact verdict, then the key, then the validity interval
+#?(:kotoba
+   (defn sign-message [kexe [:ref :form/r] skey [:ref :form/r] opts [:ref :form/r]] :string
+     (let [artifact-message (verifier/verify-artifact-message kexe)
+           not-before (fld opts :not-before)
+           expires (fld opts :expires)]
+       (cond
+         (not (string=? artifact-message "")) artifact-message
+         (not (valid-key? skey)) "malformed Ed25519 signing key"
+         (not (and (verifier/guest-integer? not-before)
+                   (verifier/guest-integer? expires)
+                   (< (form/int-value not-before) (form/int-value expires))))
+         "invalid signature validity interval"
+         :else ""))))
+
+;; the statement checks of `verify`
+#?(:kotoba
+   (defn- statement-ok? [envelope [:ref :form/r]] :bool
+     (let [artifact (fld envelope :artifact)
+           st (fld envelope :statement)
+           not-before (fld st :not-before)
+           expires (fld st :expires)]
+       (and (form/is-map? st)
+            (form/eq (form/keys-of st) (edn "#{:format :artifact-sha256 :signer :public-key :not-before :expires}"))
+            (kw-is? (fld st :format) :kotoba.signature-statement/v1)
+            (signer-matches? (fld st :signer) (fld st :public-key))
+            (form/eq (fld st :artifact-sha256) (fld artifact :sha256))
+            (verifier/guest-integer? not-before)
+            (verifier/guest-integer? expires)
+            (< (form/int-value not-before) (form/int-value expires))
+            (form/is-string? (fld envelope :signature))))))
+
+;; every check of `verify` but the final artifact verdict, in the host's order
+#?(:kotoba
+   (defn verify-signature-message [envelope [:ref :form/r] trust [:ref :form/r] now :i64] :string
+     (let [st (fld envelope :statement)
+           signer (fld st :signer)
+           not-before (fld st :not-before)
+           expires (fld st :expires)]
+       (cond
+         (not (kw-is? (fld envelope :format) :kotoba.signed-kexe/v1)) "unknown signed artifact envelope"
+         (not (and (form/is-map? envelope)
+                   (form/eq (form/keys-of envelope) (edn "#{:format :artifact :statement :signature}"))))
+         "signed artifact envelope schema mismatch"
+         (not (trust-ok? trust)) "malformed trust policy"
+         (not (statement-ok? envelope)) "signature statement mismatch"
+         (not (verify-value (form/string-value (fld st :public-key)) st
+                            (form/string-value (fld envelope :signature))))
+         "Ed25519 signature verification failed"
+         (not (set-has? (fld trust :trusted-signers) signer)) "signer is not trusted"
+         (set-has? (fld trust :revoked-signers) signer) "signer is revoked"
+         (set-has? (fld trust :revoked-artifacts) (fld st :artifact-sha256)) "artifact is revoked"
+         (< now (form/int-value not-before)) "signature is not yet valid"
+         (>= now (form/int-value expires)) "signature is expired"
+         :else ""))))
+
+#?(:kotoba
+   (defn verify-message [envelope [:ref :form/r] trust [:ref :form/r] now :i64] :string
+     (let [m (verify-signature-message envelope trust now)]
+       (if (string=? m "")
+         (verifier/verify-artifact-message (fld envelope :artifact))
+         m))))
+
+;; {:verified? true :signer .. :artifact .. :validity {:not-before .. :expires ..}}
+#?(:kotoba
+   (defn- verified-result [envelope [:ref :form/r]] [:ref :form/r]
+     (let [st (fld envelope :statement)
+           v0 (form/form-map (form/no-forms))
+           v1 (form/assoc-form v0 (kw :not-before) (fld st :not-before))
+           v2 (form/assoc-form v1 (kw :expires) (fld st :expires))
+           r0 (form/form-map (form/no-forms))
+           r1 (form/assoc-form r0 (kw :verified?) (form/bool-form true))
+           r2 (form/assoc-form r1 (kw :signer) (fld st :signer))
+           r3 (form/assoc-form r2 (kw :artifact) (fld envelope :artifact))]
+       (form/assoc-form r3 (kw :validity) v2))))
 
 #?(:clj (def ^:private encoder (Base64/getEncoder)))
 #?(:clj (def ^:private decoder (Base64/getDecoder)))
 
-(defn- b64 [bytes]
-  #?(:clj (.encodeToString encoder bytes)
-     :cljs (.toString (js/Buffer.from bytes) "base64")))
+#?(:kotoba
+   (defn- b64 [bytes :vector-i64] :string (kbytes/base64-encode bytes))
+   :default
+   (defn- b64 [bytes]
+     #?(:clj (.encodeToString encoder bytes)
+        :cljs (.toString (js/Buffer.from bytes) "base64"))))
 
-(defn- unb64 [s]
-  #?(:clj (.decode decoder ^String s)
-     :cljs (js/Buffer.from s "base64")))
-(defn- sha256? [value]
-  (and (string? value) (boolean (re-matches #"[0-9a-f]{64}" value))))
+#?(:kotoba
+   (defn- unb64 [s :string] [:option :vector-i64]
+     ;; the JDK's Base64.getDecoder(), none where it throws
+     (match-option (kbytes/base64-decode-bytes s) [:option :bytes]
+       (none (option-none-of [:option :vector-i64]))
+       (some b (option-some-of [:option :vector-i64] (vector-i64-from-bytes b)))))
+   :default
+   (defn- unb64 [s]
+     #?(:clj (.decode decoder ^String s)
+        :cljs (js/Buffer.from s "base64"))))
+#?(:kotoba
+   (defn- sha256? [value [:ref :form/r]] :bool
+     (and (form/is-string? value) (hex64? (form/string-value value))))
+   :default
+   (defn- sha256? [value]
+     (and (string? value) (boolean (re-matches #"[0-9a-f]{64}" value)))))
 
-(defn validate-trust! [trust]
-  (let [allowed-fields #{:format :trusted-signers :revoked-signers :revoked-artifacts
-                         :trusted-runtime-sha256 :revoked-runtime-sha256}]
-    (when-not (and (map? trust)
-                 (every? allowed-fields (keys trust))
-                 (= #{:format :trusted-signers :revoked-signers :revoked-artifacts}
-                    (set/intersection (set (keys trust))
-                                      #{:format :trusted-signers :revoked-signers :revoked-artifacts}))
-                 (= :kotoba.trust/v1 (:format trust))
-                 (set? (:trusted-signers trust))
-                 (every? sha256? (:trusted-signers trust))
-                 (set? (:revoked-signers trust))
-                 (every? sha256? (:revoked-signers trust))
-                 (set? (:revoked-artifacts trust))
-                 (every? sha256? (:revoked-artifacts trust))
-                 (or (not (contains? trust :trusted-runtime-sha256))
-                     (and (set? (:trusted-runtime-sha256 trust))
-                          (every? sha256? (:trusted-runtime-sha256 trust))))
-                 (or (not (contains? trust :revoked-runtime-sha256))
-                     (and (set? (:revoked-runtime-sha256 trust))
-                          (every? sha256? (:revoked-runtime-sha256 trust)))))
-      (throw (ex-info "malformed trust policy" {:phase :trust}))))
-  trust)
+#?(:kotoba
+   (defn validate-trust! [trust [:ref :form/r]] [:ref :form/r]
+     (if (trust-ok? trust) trust (refuse-form)))
+   :default
+   (defn validate-trust! [trust]
+     (let [allowed-fields #{:format :trusted-signers :revoked-signers :revoked-artifacts
+                            :trusted-runtime-sha256 :revoked-runtime-sha256}]
+       (when-not (and (map? trust)
+                    (every? allowed-fields (keys trust))
+                    (= #{:format :trusted-signers :revoked-signers :revoked-artifacts}
+                       (set/intersection (set (keys trust))
+                                         #{:format :trusted-signers :revoked-signers :revoked-artifacts}))
+                    (= :kotoba.trust/v1 (:format trust))
+                    (set? (:trusted-signers trust))
+                    (every? sha256? (:trusted-signers trust))
+                    (set? (:revoked-signers trust))
+                    (every? sha256? (:revoked-signers trust))
+                    (set? (:revoked-artifacts trust))
+                    (every? sha256? (:revoked-artifacts trust))
+                    (or (not (contains? trust :trusted-runtime-sha256))
+                        (and (set? (:trusted-runtime-sha256 trust))
+                             (every? sha256? (:trusted-runtime-sha256 trust))))
+                    (or (not (contains? trust :revoked-runtime-sha256))
+                        (and (set? (:revoked-runtime-sha256 trust))
+                             (every? sha256? (:revoked-runtime-sha256 trust)))))
+         (throw (ex-info "malformed trust policy" {:phase :trust}))))
+     trust))
 
-(defn signer-id [public-key]
-  (artifact/sha256 {:algorithm :ed25519 :public-key public-key}))
+#?(:kotoba
+   (defn signer-id [public-key :string] :string
+     (signer-id-of (form/string-form public-key)))
+   :default
+   (defn signer-id [public-key]
+     (artifact/sha256 {:algorithm :ed25519 :public-key public-key})))
 
-(defn- decode-public [encoded]
-  #?(:clj (.generatePublic (KeyFactory/getInstance "Ed25519")
-                           (X509EncodedKeySpec. (unb64 encoded)))
-     :cljs (crypto/createPublicKey #js {:key (unb64 encoded) :format "der" :type "spki"})))
+#?(:kotoba
+   (defn- decode-public [encoded :string] [:option :vector-i64]
+     (match-option (unb64 encoded) [:option :vector-i64]
+       (none (option-none-of [:option :vector-i64]))
+       (some der (unwrap-der der (spki-prefix) 32))))
+   :default
+   (defn- decode-public [encoded]
+     #?(:clj (.generatePublic (KeyFactory/getInstance "Ed25519")
+                              (X509EncodedKeySpec. (unb64 encoded)))
+        :cljs (crypto/createPublicKey #js {:key (unb64 encoded) :format "der" :type "spki"}))))
 
-(defn- decode-private [encoded]
-  #?(:clj (.generatePrivate (KeyFactory/getInstance "Ed25519")
-                            (PKCS8EncodedKeySpec. (unb64 encoded)))
-     :cljs (crypto/createPrivateKey #js {:key (unb64 encoded) :format "der" :type "pkcs8"})))
+#?(:kotoba
+   (defn- decode-private [encoded :string] [:option :vector-i64]
+     (match-option (unb64 encoded) [:option :vector-i64]
+       (none (option-none-of [:option :vector-i64]))
+       (some der (unwrap-der der (pkcs8-prefix) 32))))
+   :default
+   (defn- decode-private [encoded]
+     #?(:clj (.generatePrivate (KeyFactory/getInstance "Ed25519")
+                               (PKCS8EncodedKeySpec. (unb64 encoded)))
+        :cljs (crypto/createPrivateKey #js {:key (unb64 encoded) :format "der" :type "pkcs8"}))))
 
 ;; Ed25519 takes no digest argument: node:crypto spells that `null` as the
 ;; algorithm, and the JVM spells it by there being no digest to name.
-(defn- raw-sign [private-key ^bytes message]
-  #?(:clj (let [s (doto (Signature/getInstance "Ed25519")
-                    (.initSign private-key) (.update message))]
-            (.sign s))
-     :cljs (crypto/sign nil message private-key)))
+#?(:kotoba
+   (defn- raw-sign [seed :vector-i64 message :vector-i64] [:option :vector-i64]
+     (ed/sign seed message))
+   :default
+   (defn- raw-sign [private-key ^bytes message]
+     #?(:clj (let [s (doto (Signature/getInstance "Ed25519")
+                       (.initSign private-key) (.update message))]
+               (.sign s))
+        :cljs (crypto/sign nil message private-key))))
 
-(defn- raw-verify [public-key ^bytes message ^bytes signature]
-  #?(:clj (let [v (doto (Signature/getInstance "Ed25519")
-                    (.initVerify public-key) (.update message))]
-            (.verify v signature))
-     :cljs (crypto/verify nil message public-key signature)))
+#?(:kotoba
+   (defn- raw-verify [public :vector-i64 message :vector-i64 signature :vector-i64] :bool
+     (ed/verify public message signature))
+   :default
+   (defn- raw-verify [public-key ^bytes message ^bytes signature]
+     #?(:clj (let [v (doto (Signature/getInstance "Ed25519")
+                       (.initVerify public-key) (.update message))]
+               (.verify v signature))
+        :cljs (crypto/verify nil message public-key signature))))
 
-(defn- utf8-bytes [^String s]
-  #?(:clj (kbytes/utf8-bytes s)
-     :cljs (js/Buffer.from s "utf8")))
+#?(:kotoba
+   (defn- utf8-bytes [s :string] :vector-i64
+     (kbytes/utf8-encode s))
+   :default
+   (defn- utf8-bytes [^String s]
+     #?(:clj (kbytes/utf8-bytes s)
+        :cljs (js/Buffer.from s "utf8"))))
 
-(defn- keypair-matches? [public-key private-key]
-  (try
-    (let [challenge (utf8-bytes "kotoba:key-consistency:v1")
-          proof (raw-sign (decode-private private-key) challenge)]
-      (raw-verify (decode-public public-key) challenge proof))
-    (catch #?(:clj Exception :cljs :default) _ false)))
+#?(:kotoba
+   (defn- keypair-matches? [public-key :string private-key :string] :bool
+     (match-option (decode-private private-key) [:option :vector-i64]
+       (none false)
+       (some seed
+         (match-option (decode-public public-key) [:option :vector-i64]
+           (none false)
+           (some public
+             (match-option (raw-sign seed (utf8-bytes "kotoba:key-consistency:v1")) [:option :vector-i64]
+               (none false)
+               (some proof (raw-verify public (utf8-bytes "kotoba:key-consistency:v1") proof))))))))
+   :default
+   (defn- keypair-matches? [public-key private-key]
+     (try
+       (let [challenge (utf8-bytes "kotoba:key-consistency:v1")
+             proof (raw-sign (decode-private private-key) challenge)]
+         (raw-verify (decode-public public-key) challenge proof))
+       (catch #?(:clj Exception :cljs :default) _ false))))
 
-(defn valid-key? [key]
-  (and (map? key)
-       (= #{:format :algorithm :signer :public-key :private-key} (set (keys key)))
-       (= :kotoba.signing-key/v1 (:format key))
-       (= :ed25519 (:algorithm key))
-       (string? (:public-key key))
-       (string? (:private-key key))
-       (= (:signer key) (signer-id (:public-key key)))
-       (keypair-matches? (:public-key key) (:private-key key))))
+#?(:kotoba
+   (defn valid-key? [skey [:ref :form/r]] :bool
+     (and (form/is-map? skey)
+          (form/eq (form/keys-of skey) (edn "#{:format :algorithm :signer :public-key :private-key}"))
+          (kw-is? (fld skey :format) :kotoba.signing-key/v1)
+          (kw-is? (fld skey :algorithm) :ed25519)
+          (form/is-string? (fld skey :public-key))
+          (form/is-string? (fld skey :private-key))
+          (signer-matches? (fld skey :signer) (fld skey :public-key))
+          (keypair-matches? (form/string-value (fld skey :public-key))
+                            (form/string-value (fld skey :private-key)))))
+   :default
+   (defn valid-key? [key]
+     (and (map? key)
+          (= #{:format :algorithm :signer :public-key :private-key} (set (keys key)))
+          (= :kotoba.signing-key/v1 (:format key))
+          (= :ed25519 (:algorithm key))
+          (string? (:public-key key))
+          (string? (:private-key key))
+          (= (:signer key) (signer-id (:public-key key)))
+          (keypair-matches? (:public-key key) (:private-key key)))))
 
-(defn valid-verification-key? [key]
-  (and (map? key)
-       (= #{:format :algorithm :signer :public-key} (set (keys key)))
-       (= :kotoba.verification-key/v1 (:format key))
-       (= :ed25519 (:algorithm key))
-       (string? (:public-key key))
-       (= (:signer key) (signer-id (:public-key key)))
-       (try (decode-public (:public-key key)) true
-            (catch #?(:clj Exception :cljs :default) _ false))))
+#?(:kotoba
+   (defn valid-verification-key? [vkey [:ref :form/r]] :bool
+     (and (form/is-map? vkey)
+          (form/eq (form/keys-of vkey) (edn "#{:format :algorithm :signer :public-key}"))
+          (kw-is? (fld vkey :format) :kotoba.verification-key/v1)
+          (kw-is? (fld vkey :algorithm) :ed25519)
+          (form/is-string? (fld vkey :public-key))
+          (signer-matches? (fld vkey :signer) (fld vkey :public-key))
+          (public-decodes? (form/string-value (fld vkey :public-key)))))
+   :default
+   (defn valid-verification-key? [key]
+     (and (map? key)
+          (= #{:format :algorithm :signer :public-key} (set (keys key)))
+          (= :kotoba.verification-key/v1 (:format key))
+          (= :ed25519 (:algorithm key))
+          (string? (:public-key key))
+          (= (:signer key) (signer-id (:public-key key)))
+          (try (decode-public (:public-key key)) true
+               (catch #?(:clj Exception :cljs :default) _ false)))))
 
-(defn verification-key [signing-key]
-  (when-not (valid-key? signing-key)
-    (throw (ex-info "malformed Ed25519 signing key" {:phase :sign})))
-  {:format :kotoba.verification-key/v1 :algorithm :ed25519
-   :signer (:signer signing-key) :public-key (:public-key signing-key)})
+#?(:kotoba
+   (defn verification-key [signing-key [:ref :form/r]] [:ref :form/r]
+     (if (valid-key? signing-key)
+       (let [m0 (form/form-map (form/no-forms))
+             m1 (form/assoc-form m0 (kw :format) (kw :kotoba.verification-key/v1))
+             m2 (form/assoc-form m1 (kw :algorithm) (kw :ed25519))
+             m3 (form/assoc-form m2 (kw :signer) (fld signing-key :signer))]
+         (form/assoc-form m3 (kw :public-key) (fld signing-key :public-key)))
+       (refuse-form)))
+   :default
+   (defn verification-key [signing-key]
+     (when-not (valid-key? signing-key)
+       (throw (ex-info "malformed Ed25519 signing key" {:phase :sign})))
+     {:format :kotoba.verification-key/v1 :algorithm :ed25519
+      :signer (:signer signing-key) :public-key (:public-key signing-key)}))
 
-(defn trusted-signer-id! [key]
-  (cond
-    (valid-verification-key? key) (:signer key)
-    (valid-key? key) (:signer key)
-    :else (throw (ex-info "malformed Ed25519 verification key" {:phase :trust}))))
+#?(:kotoba
+   (defn trusted-signer-id! [k [:ref :form/r]] :string
+     (if (or (valid-verification-key? k) (valid-key? k))
+       (form/string-value (fld k :signer))
+       (refuse-string)))
+   :default
+   (defn trusted-signer-id! [key]
+     (cond
+       (valid-verification-key? key) (:signer key)
+       (valid-key? key) (:signer key)
+       :else (throw (ex-info "malformed Ed25519 verification key" {:phase :trust})))))
 
-(defn sign-value [key value]
-  (when-not (valid-key? key)
-    (throw (ex-info "malformed Ed25519 signing key" {:phase :sign})))
-  (b64 (raw-sign (decode-private (:private-key key))
-                 (artifact/canonical-bytes value))))
+#?(:kotoba
+   (defn sign-value [skey [:ref :form/r] value [:ref :form/r]] :string
+     (if (valid-key? skey)
+       (sign-bytes skey (canonical-bytes value))
+       (refuse-string)))
+   :default
+   (defn sign-value [key value]
+     (when-not (valid-key? key)
+       (throw (ex-info "malformed Ed25519 signing key" {:phase :sign})))
+     (b64 (raw-sign (decode-private (:private-key key))
+                    (artifact/canonical-bytes value)))))
 
-(defn verify-value [public-key value signature]
-  (try
-    (raw-verify (decode-public public-key)
-                (artifact/canonical-bytes value)
-                (unb64 signature))
-    (catch #?(:clj Exception :cljs :default) _ false)))
+#?(:kotoba
+   (defn verify-value [public-key :string value [:ref :form/r] signature :string] :bool
+     (match-option (decode-public public-key) [:option :vector-i64]
+       (none false)
+       (some public
+         (match-option (unb64 signature) [:option :vector-i64]
+           (none false)
+           (some sig (raw-verify public (canonical-bytes value) sig))))))
+   :default
+   (defn verify-value [public-key value signature]
+     (try
+       (raw-verify (decode-public public-key)
+                   (artifact/canonical-bytes value)
+                   (unb64 signature))
+       (catch #?(:clj Exception :cljs :default) _ false))))
 
-(defn generate-keypair []
-  (let [#?@(:clj [pair (.generateKeyPair (KeyPairGenerator/getInstance "Ed25519"))
-                  public (b64 (.getEncoded (.getPublic pair)))
-                  private (b64 (.getEncoded (.getPrivate pair)))]
-            :cljs [pair (crypto/generateKeyPairSync "ed25519")
-                   public (b64 (.export (.-publicKey pair)
-                                        #js {:format "der" :type "spki"}))
-                   private (b64 (.export (.-privateKey pair)
-                                         #js {:format "der" :type "pkcs8"}))])]
-    {:format :kotoba.signing-key/v1 :algorithm :ed25519
-     :signer (signer-id public) :public-key public :private-key private}))
+#?(:kotoba
+   (defn generate-keypair [] [:ref :form/r]
+     (match-option (ed/unhex (entropy/draw "32")) [:option :vector-i64]
+       (none (refuse-form))
+       (some seed (keypair-from-seed seed))))
+   :default
+   (defn generate-keypair []
+     (let [#?@(:clj [pair (.generateKeyPair (KeyPairGenerator/getInstance "Ed25519"))
+                     public (b64 (.getEncoded (.getPublic pair)))
+                     private (b64 (.getEncoded (.getPrivate pair)))]
+               :cljs [pair (crypto/generateKeyPairSync "ed25519")
+                      public (b64 (.export (.-publicKey pair)
+                                           #js {:format "der" :type "spki"}))
+                      private (b64 (.export (.-privateKey pair)
+                                            #js {:format "der" :type "pkcs8"}))])]
+       {:format :kotoba.signing-key/v1 :algorithm :ed25519
+        :signer (signer-id public) :public-key public :private-key private})))
 
-(defn- statement [artifact key not-before expires]
-  {:format :kotoba.signature-statement/v1
-   :artifact-sha256 (:sha256 artifact)
-   :signer (:signer key)
-   :public-key (:public-key key)
-   :not-before not-before
-   :expires expires})
+#?(:kotoba
+   (defn- statement [artifact [:ref :form/r] skey [:ref :form/r]
+                     not-before [:ref :form/r] expires [:ref :form/r]] [:ref :form/r]
+     (let [m0 (form/form-map (form/no-forms))
+           m1 (form/assoc-form m0 (kw :format) (kw :kotoba.signature-statement/v1))
+           m2 (form/assoc-form m1 (kw :artifact-sha256) (fld artifact :sha256))
+           m3 (form/assoc-form m2 (kw :signer) (fld skey :signer))
+           m4 (form/assoc-form m3 (kw :public-key) (fld skey :public-key))
+           m5 (form/assoc-form m4 (kw :not-before) not-before)]
+       (form/assoc-form m5 (kw :expires) expires)))
+   :default
+   (defn- statement [artifact key not-before expires]
+     {:format :kotoba.signature-statement/v1
+      :artifact-sha256 (:sha256 artifact)
+      :signer (:signer key)
+      :public-key (:public-key key)
+      :not-before not-before
+      :expires expires}))
 
-(defn sign [kexe key {:keys [not-before expires]}]
-  (verifier/verify-artifact! kexe)
-  (when-not (valid-key? key)
-    (throw (ex-info "malformed Ed25519 signing key" {:phase :sign})))
-  ;; `verifier/guest-integer?`, not `integer?`: a validity bound read back
-  ;; from an envelope on the Node host is a `bigint` (every integer token the
-  ;; kotoba reader returns is one), and cljs `integer?` says false to it.
-  ;; Measured 2026-09-11 in amu: an envelope signed here, written with
-  ;; `artifact/edn-safe`, read back with the kotoba reader, refused as
-  ;; "signature statement mismatch" -- while the same bytes read with
-  ;; `cljs.reader` verified, at the price of every i64 in the artifact.
-  ;; The relational operators are exact across the two representations.
-  (when-not (and (verifier/guest-integer? not-before)
-                 (verifier/guest-integer? expires)
-                 (< not-before expires))
-    (throw (ex-info "invalid signature validity interval" {:phase :sign})))
-  (let [statement (statement kexe key not-before expires)
-        signature (sign-value key statement)]
-    {:format :kotoba.signed-kexe/v1 :artifact kexe :statement statement
-     :signature signature}))
+#?(:kotoba
+   (defn sign [kexe [:ref :form/r] skey [:ref :form/r] opts [:ref :form/r]] [:ref :form/r]
+     (if (string=? (sign-message kexe skey opts) "")
+       (let [st (statement kexe skey (fld opts :not-before) (fld opts :expires))
+             e0 (form/form-map (form/no-forms))
+             e1 (form/assoc-form e0 (kw :format) (kw :kotoba.signed-kexe/v1))
+             e2 (form/assoc-form e1 (kw :artifact) kexe)
+             e3 (form/assoc-form e2 (kw :statement) st)]
+         (form/assoc-form e3 (kw :signature) (form/string-form (sign-value skey st))))
+       (refuse-form)))
+   :default
+   (defn sign [kexe key {:keys [not-before expires]}]
+     (verifier/verify-artifact! kexe)
+     (when-not (valid-key? key)
+       (throw (ex-info "malformed Ed25519 signing key" {:phase :sign})))
+     ;; `verifier/guest-integer?`, not `integer?`: a validity bound read back
+     ;; from an envelope on the Node host is a `bigint` (every integer token the
+     ;; kotoba reader returns is one), and cljs `integer?` says false to it.
+     ;; Measured 2026-09-11 in amu: an envelope signed here, written with
+     ;; `artifact/edn-safe`, read back with the kotoba reader, refused as
+     ;; "signature statement mismatch" -- while the same bytes read with
+     ;; `cljs.reader` verified, at the price of every i64 in the artifact.
+     ;; The relational operators are exact across the two representations.
+     (when-not (and (verifier/guest-integer? not-before)
+                    (verifier/guest-integer? expires)
+                    (< not-before expires))
+       (throw (ex-info "invalid signature validity interval" {:phase :sign})))
+     (let [statement (statement kexe key not-before expires)
+           signature (sign-value key statement)]
+       {:format :kotoba.signed-kexe/v1 :artifact kexe :statement statement
+        :signature signature})))
 
-(defn verify
-  [envelope trust now]
-  (when-not (= :kotoba.signed-kexe/v1 (:format envelope))
-    (throw (ex-info "unknown signed artifact envelope" {:phase :signature})))
-  (when-not (and (map? envelope)
-                 (= #{:format :artifact :statement :signature} (set (keys envelope))))
-    (throw (ex-info "signed artifact envelope schema mismatch" {:phase :signature})))
-  (validate-trust! trust)
-  (let [{:keys [artifact statement signature]} envelope
-        {:keys [signer public-key not-before expires artifact-sha256]} statement]
-    (when-not (and (map? statement)
-                   (= #{:format :artifact-sha256 :signer :public-key :not-before :expires}
-                      (set (keys statement)))
-                   (= :kotoba.signature-statement/v1 (:format statement))
-                   (= signer (signer-id public-key))
-                   (= artifact-sha256 (:sha256 artifact))
-                   (verifier/guest-integer? not-before)
-                   (verifier/guest-integer? expires)
-                   (< not-before expires)
-                   (string? signature))
-      (throw (ex-info "signature statement mismatch" {:phase :signature})))
-    (when-not (verify-value public-key statement signature)
-      (throw (ex-info "Ed25519 signature verification failed" {:phase :signature})))
-    (when-not (contains? (set (:trusted-signers trust)) signer)
-      (throw (ex-info "signer is not trusted" {:phase :trust :signer signer})))
-    (when (contains? (set (:revoked-signers trust)) signer)
-      (throw (ex-info "signer is revoked" {:phase :trust :signer signer})))
-    (when (contains? (set (:revoked-artifacts trust)) artifact-sha256)
-      (throw (ex-info "artifact is revoked" {:phase :trust :artifact artifact-sha256})))
-    (when (< now not-before)
-      (throw (ex-info "signature is not yet valid" {:phase :trust :not-before not-before :now now})))
-    (when (>= now expires)
-      (throw (ex-info "signature is expired" {:phase :trust :expires expires :now now})))
-    (verifier/verify-artifact! artifact)
-    {:verified? true :signer signer :artifact artifact
-     :validity {:not-before not-before :expires expires}}))
+#?(:kotoba
+   (defn verify [envelope [:ref :form/r] trust [:ref :form/r] now :i64] [:ref :form/r]
+     (if (string=? (verify-message envelope trust now) "")
+       (verified-result envelope)
+       (refuse-form)))
+   :default
+   (defn verify
+     [envelope trust now]
+     (when-not (= :kotoba.signed-kexe/v1 (:format envelope))
+       (throw (ex-info "unknown signed artifact envelope" {:phase :signature})))
+     (when-not (and (map? envelope)
+                    (= #{:format :artifact :statement :signature} (set (keys envelope))))
+       (throw (ex-info "signed artifact envelope schema mismatch" {:phase :signature})))
+     (validate-trust! trust)
+     (let [{:keys [artifact statement signature]} envelope
+           {:keys [signer public-key not-before expires artifact-sha256]} statement]
+       (when-not (and (map? statement)
+                      (= #{:format :artifact-sha256 :signer :public-key :not-before :expires}
+                         (set (keys statement)))
+                      (= :kotoba.signature-statement/v1 (:format statement))
+                      (= signer (signer-id public-key))
+                      (= artifact-sha256 (:sha256 artifact))
+                      (verifier/guest-integer? not-before)
+                      (verifier/guest-integer? expires)
+                      (< not-before expires)
+                      (string? signature))
+         (throw (ex-info "signature statement mismatch" {:phase :signature})))
+       (when-not (verify-value public-key statement signature)
+         (throw (ex-info "Ed25519 signature verification failed" {:phase :signature})))
+       (when-not (contains? (set (:trusted-signers trust)) signer)
+         (throw (ex-info "signer is not trusted" {:phase :trust :signer signer})))
+       (when (contains? (set (:revoked-signers trust)) signer)
+         (throw (ex-info "signer is revoked" {:phase :trust :signer signer})))
+       (when (contains? (set (:revoked-artifacts trust)) artifact-sha256)
+         (throw (ex-info "artifact is revoked" {:phase :trust :artifact artifact-sha256})))
+       (when (< now not-before)
+         (throw (ex-info "signature is not yet valid" {:phase :trust :not-before not-before :now now})))
+       (when (>= now expires)
+         (throw (ex-info "signature is expired" {:phase :trust :expires expires :now now})))
+       (verifier/verify-artifact! artifact)
+       {:verified? true :signer signer :artifact artifact
+        :validity {:not-before not-before :expires expires}})))
