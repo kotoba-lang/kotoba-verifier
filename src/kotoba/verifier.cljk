@@ -23,7 +23,12 @@
   (:require [kotoba.bytes :as kbytes])
   ;; The operation-name sets below hold SYMBOLS; the default `set` alias is
   ;; instantiated over keywords. Kotoba-only alias, instantiated over symbols.
-  #?(:kotoba (:require [kotoba.lang.coll :as symset :with {elem :symbol}])))
+  #?(:kotoba (:require [kotoba.lang.coll :as symset :with {elem :symbol}]
+                       [kotoba.gmir :as gmir]
+                       [kotoba.form :as form]))
+  #?(:kotoba (:schemas {:form/r [:record :form/r [[:tag :i64] [:s :string] [:n :i64] [:k :keyword]
+                                                  [:kids [:list [:ref :form/r]]]]]
+                        :form/rd [:record :form/rd [[:form [:ref :form/r]] [:pos :i64]]]})))
 
 ;; memwidth: the checked-memory surface, four transfer widths by four window
 ;; tiers plus the element-indexed slice family (amu ADR 0285).
@@ -1829,14 +1834,23 @@
           (when-not (string? (first args))
             (reject! "runtime KIR rodata literal requires a string literal"
                      {:operation op}))
-          (when-not (gmir/rodata-content?
-                     (case op
-                       ucs2 :utf-16le-nul
-                       guid :guid-mixed-endian
-                       :hex-bytes)
-                     (first args))
-            (reject! "runtime KIR rodata literal is malformed for its encoding"
-                     {:operation op})))
+          #?(:kotoba
+             (when-not (gmir/rodata-content?
+                        (form/keyword-form (if (= op 'ucs2)
+                                             :utf-16le-nul
+                                             (if (= op 'guid) :guid-mixed-endian :hex-bytes)))
+                        (form/string-form (first args)))
+               (reject! "runtime KIR rodata literal is malformed for its encoding"
+                        {:operation op}))
+             :default
+             (when-not (gmir/rodata-content?
+                        (case op
+                          ucs2 :utf-16le-nul
+                          guid :guid-mixed-endian
+                          :hex-bytes)
+                        (first args))
+               (reject! "runtime KIR rodata literal is malformed for its encoding"
+                        {:operation op}))))
 
         ;; boot-scratch: the address of a function in the same module
         ;; (kotoba-gmir ADR-0013). Verified independently of the frontend, and
