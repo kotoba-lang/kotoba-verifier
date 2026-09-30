@@ -52,6 +52,17 @@
            (rejection (program :exports ['main 'sum])))))
   (testing "a schema table that is not recursive is not the producer's to attach"
     (is (some? (rejection (program :schemas {:t/point '[:record :t/point [[:x :i64]]]})))))
+  (testing "a declared record a signature names carries its table (amu ADR 0353 :native-record-boundary)"
+    (let [point '[:record :t/point [[:x :i64]]]
+          record-program {:format :kotoba.kir/v4 :entry 'main :exports ['main]
+                          :signature {:params [] :result :i64} :effects #{}
+                          :functions [{:name 'x-of :params ['p] :param-types '[[:ref :t/point]]
+                                       :result :i64 :effects #{} :body (list 'record-get point 'p :x)}
+                                      {:name 'main :params [] :param-types [] :result :i64 :effects #{}
+                                       :body (list 'x-of (list 'record-new point 7))}]}]
+      (is (nil? (rejection (assoc record-program :schemas {:t/point point}))))
+      (is (= "runtime KIR module shape rejected"
+             (rejection (assoc record-program :schemas {:t/other '[:record :t/other [[:x :i64]]]}))))))
   (testing "matching a node against a different variant"
     (is (= "runtime KIR variant dispatch rejected"
            (rejection

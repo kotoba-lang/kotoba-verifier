@@ -801,7 +801,11 @@
 ;; JVM-only, cljs has no `String`/`Charset`; `TextEncoder` is the
 ;; UTF-8-safe equivalent.
 (defn- utf8-byte-count [s]
-  #?(:clj (alength (kbytes/utf8-bytes ^String s))
+  ;; `alength` asks clojure.lang.RT to resolve the byte-array class by name.
+  ;; That class lookup is unavailable in a closed GraalVM Native Image even
+  ;; though the byte[] itself is present. `count` has identical semantics for
+  ;; this byte array and remains statically reachable in the native compiler.
+  #?(:clj (count (kbytes/utf8-bytes ^String s))
      :cljs (.-length (.encode (js/TextEncoder.) s))))
 
 (defn- valid-name? [value]
@@ -2171,15 +2175,33 @@
                  false)))
            (keys table)))))
 
+(defn- signature-schema-reference?
+  "Independent copy: true when some function's `:param-types` or `:result`
+  -- the one place a reference survives lowering -- names `[:ref q]` for a q
+  TABLE declares."
+  [table functions]
+  (boolean
+   (and (sequential? functions)
+        (some (fn [f]
+                (and (map? f)
+                     (some #(and (vector? %) (= 2 (count %)) (= :ref (first %))
+                                 (contains? table (second %)))
+                           (mapcat #(tree-seq coll? seq %)
+                                   (cond-> (vec (:param-types f)) (:result f) (conj (:result f)))))))
+              functions))))
+
 (def ^:private module-shape-checks
   [[:map (fn [p] (map? p))]
    [:keys (fn [p] (contains? #{#{:format :entry :exports :signature :effects :functions}
                                #{:format :entry :exports :signature :effects :functions :schemas}}
                              (set (keys p))))]
-   ;; ABI v8: a RECURSIVE schema table travels with the program, because a
-   ;; type that names itself cannot be expanded into the signatures that use
-   ;; it. Only a recursive one: re-derived here, so a producer that attached a
-   ;; table it had no need of is refused rather than trusted.
+   ;; ABI v8: a schema table travels with the program when the oracle needs
+   ;; it to resolve a `[:ref q]` -- a RECURSIVE table (a type that names
+   ;; itself cannot be expanded into the signatures that use it), or a
+   ;; reference a function signature names (a declared record crossing a
+   ;; function boundary, amu ADR 0353 floor :native-record-boundary). Only
+   ;; then: re-derived here, so a producer that attached a table it had no
+   ;; need of is refused rather than trusted.
    [:schemas (fn [p] (or (not (contains? p :schemas))
                          (let [table (:schemas p)]
                            (and (map? table) (<= 1 (count table) max-schema-table-entries)
@@ -2189,7 +2211,8 @@
                                                (vector? descriptor)
                                                (= name (second descriptor))))
                                         table)
-                                (recursive-schema-table? table)))))]
+                                (or (recursive-schema-table? table)
+                                    (signature-schema-reference? table (:functions p)))))))]
    [:format (fn [p] (contains? #{:kotoba.kir/v3 :kotoba.kir/v4} (:format p)))]
    ;; A module either has an entry -- `main`, zero-arity, host-readable result
    ;; -- or it is a LIBRARY: no entry, no signature, and an export list that
