@@ -20,7 +20,10 @@
                      [kotoba.kir.compatibility :as compatibility-profile]
                      [kotoba.kir :as ir]
                      [kotoba.kir.target :as target-profile]))
-  (:require [kotoba.bytes :as kbytes]))
+  (:require [kotoba.bytes :as kbytes])
+  ;; The operation-name sets below hold SYMBOLS; the default `set` alias is
+  ;; instantiated over keywords. Kotoba-only alias, instantiated over symbols.
+  #?(:kotoba (:require [kotoba.lang.coll :as symset :with {elem :symbol}])))
 
 ;; memwidth: the checked-memory surface, four transfer widths by four window
 ;; tiers plus the element-indexed slice family (amu ADR 0285).
@@ -417,9 +420,12 @@
 (def ^:private region-operations '{arena-scope 1})
 (def ^:private region-scalar-types #{:i64 :bool :f64})
 (def ^:private region-scalar-operations
-  (into (set/union arithmetic comparisons i64-shifts
-                   (set (keys i64-operations)) (set (keys i32-operations))
-                   (set (keys f64-operations)) (set (keys f32-operations)))
+  (into #?(:kotoba (symset/union (symset/union arithmetic comparisons i64-shifts
+                                               (set (keys i64-operations)) (set (keys i32-operations)))
+                                 (set (keys f64-operations)) (set (keys f32-operations)))
+           :default (set/union arithmetic comparisons i64-shifts
+                               (set (keys i64-operations)) (set (keys i32-operations))
+                               (set (keys f64-operations)) (set (keys f32-operations))))
         '#{bit-not bool-not
            string-byte-length string-code-point-at string-index-of string-contains?
            string=? string-split-count
