@@ -771,8 +771,13 @@
     (seq? form)
     (let [[op & args] form]
       (cond
-        (contains? '#{record-new variant-new hetero-vector-new hetero-vector-assoc} op)
+        (contains? '#{record-new record-assoc variant-new hetero-vector-new hetero-vector-assoc} op)
         (first args)
+
+        (and (= op 'let) (= 2 (count args)) (vector? (first args)))
+        (handle-type-of (second args)
+                        (reduce (fn [env [name value]] (assoc env name (handle-type-of value env)))
+                                locals (partition 2 (first args))))
 
         (= op 'hetero-vector-at)
         (let [[type _ index] args]
@@ -1088,13 +1093,36 @@
 ;;
 ;; That last case is what makes a chained projection verifiable without the
 ;; intermediate record ever becoming a value.
+(declare let-locals)
+
 (defn- record-schema-of [form locals]
   (cond
     (and (seq? form) (= 'record-new (first form))) (second form)
     ;; The same exact SROA IF may be projected directly or named by one let.
-    ;; `record-sroa-if-schema` deliberately does not resolve symbols, so this
-    ;; does not turn into general aggregate inference or forwarding.
-    (and (seq? form) (= 'if (first form))) (record-sroa-if-schema form)
+    ;; Beyond it (amu ADR 0353 floor :native-record-operations), an IF whose
+    ;; two arms denote the same record -- `(:a (if c m n))`, a row join --
+    ;; denotes that record: kotoba-native's value lowering merges the two
+    ;; bundles (or handles) with one phi per word, whatever built each arm.
+    (and (seq? form) (= 'if (first form)))
+    (or (record-sroa-if-schema form)
+        (when (= 4 (count form))
+          (let [then-schema (record-schema-of (nth form 2) locals)
+                else-schema (record-schema-of (nth form 3) locals)]
+            ;; A declared record reaches here spelled either way -- a call's
+            ;; `[:ref q]` result, a construction's expanded `[:record q ..]`
+            ;; -- and both name one record (`nominal=`). The expanded
+            ;; spelling is kept when one arm has it.
+            (cond (and then-schema (= then-schema else-schema)) then-schema
+                  (and then-schema (nominal= then-schema else-schema)) then-schema
+                  (and else-schema (nominal= else-schema then-schema)) else-schema))))
+    ;; A LET denotes what its body denotes, its bindings in scope: a row
+    ;; operation elaborates to `(let [receiver m] (record-new T ..))`.
+    (and (seq? form) (= 'let (first form)) (= 3 (count form)))
+    (record-schema-of (nth form 2) (let-locals (second form) locals))
+    ;; An update denotes its own type, which must be its operand's.
+    (and (seq? form) (= 'record-assoc (first form)) (= 5 (count form)))
+    (let [[_ type value] form]
+      (when (nominal= type (record-schema-of value locals)) type))
     (symbol? form) (get locals form)
     ;; A call whose declared result is a record: the operand arrived boxed.
     (and (seq? form) (simple-symbol? (first form)) (contains? *call-results* (first form)))
@@ -1138,6 +1166,12 @@
   (or (record-new-schema value)
       (call-record-schema value)
       (record-sroa-if-schema value)
+      ;; A let, an if or an update whose value is a record: the row operations'
+      ;; elaboration, named by a binding. Resolved in no outer scope, so a
+      ;; bare symbol is still not forwarded.
+      (when (and (seq? value) (contains? '#{let if record-assoc} (first value)))
+        (let [schema (record-schema-of value {})]
+          (when (or (native-scalar-record-type? schema) (record-reference? schema)) schema)))
       (let [result (provider-result-schema value)]
         (when (native-scalar-record-type? result) result))))
 
@@ -1147,6 +1181,34 @@
                           (variant-sroa-if-schema value)
                           (provider-result-schema value))]
         (variant-local type))))
+
+(def ^:dynamic *record-params*
+  "The current function's record parameters that no enclosing let rebinds.
+  A record parameter is always the one-word handle a caller passed, so a let
+  naming one -- `(let [receiver m] ..)`, which is how kotoba-sema elaborates a
+  row operation on a parameter (amu ADR 0353 floor :native-record-operations)
+  -- binds that handle. A flattened let-bound record is still not forwarded."
+  #{})
+
+(defn- let-bound-names [bindings]
+  (if (and (vector? bindings) (even? (count bindings))) (take-nth 2 bindings) ()))
+
+(defn- param-forward [value env]
+  (when (and (symbol? value) (contains? *record-params* value))
+    (get env value)))
+
+(defn- let-locals
+  "The locals a let's BINDINGS put in scope over LOCALS, as `verify-bindings!`
+  derives them -- without verifying, which `verify-expr!` does separately."
+  [bindings locals]
+  (if (and (vector? bindings) (even? (count bindings)))
+    (binding [*record-params* (apply disj *record-params* (let-bound-names bindings))]
+      (reduce (fn [env [name value]]
+                (assoc env name (or (binding-local value)
+                                    (param-forward value env)
+                                    (when *boxed-aggregates?* (handle-type-of value env)))))
+              locals (partition 2 bindings)))
+    locals))
 
 (defn- verify-bindings! [bindings locals signatures depth nodes facts]
   (when-not (and (vector? bindings) (even? (count bindings))
@@ -1162,6 +1224,7 @@
           (reject! "runtime KIR local name rejected" {:name name}))
         (verify-expr! value env signatures (inc depth) nodes facts)
         (recur (next pairs) (assoc env name (or (binding-local value)
+                                                 (param-forward value env)
                                                  (when *boxed-aggregates?*
                                                    (handle-type-of value env))))))
       env)))
@@ -1228,9 +1291,11 @@
         (let [[bindings & body] args]
           (when-not (= 1 (count body))
             (reject! "runtime KIR let arity rejected" {}))
-          (verify-expr! (first body)
-                        (verify-bindings! bindings locals signatures depth nodes facts)
-                        signatures (inc depth) nodes facts))
+          ;; A name this let binds is no longer the parameter it may shadow.
+          (binding [*record-params* (apply disj *record-params* (let-bound-names bindings))]
+            (verify-expr! (first body)
+                          (verify-bindings! bindings locals signatures depth nodes facts)
+                          signatures (inc depth) nodes facts)))
 
         (= op 'if)
         (do
@@ -1376,6 +1441,24 @@
                                  (= (second declared) (second type)))))
             (reject! "runtime KIR record projection rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts))
+
+        ;; amu ADR 0353 floor :native-record-operations: an update of one
+        ;; field. Held to `record-get`'s discipline -- a well-formed record
+        ;; type, a field it declares, and an operand that IS that record -- so
+        ;; the result is the operand's type and nothing is coerced.
+        (= op 'record-assoc)
+        (let [[type value field replacement] args
+              declared (or (record-schema-of value locals)
+                           (when *boxed-aggregates?* (handle-type-of value locals)))]
+          (when-not (and (= 4 (count args))
+                         (or (native-scalar-record-type? type)
+                             (and *boxed-aggregates?* (handle-of? :record type)))
+                         (keyword? field)
+                         (some #(= field (first %)) (nth type 2))
+                         (nominal= type declared))
+            (reject! "runtime KIR record update rejected" {:operation op}))
+          (verify-expr! value locals signatures (inc depth) nodes facts)
+          (verify-expr! replacement locals signatures (inc depth) nodes facts))
 
         ;; ADR 0063, mirroring `record-new` immediately above: the tag must
         ;; be one of the type's own declared cases.
@@ -2463,8 +2546,15 @@
                          ;; requires the projected schema to EQUAL the declared
                          ;; one. Every other parameter stays nil, as before: a
                          ;; plain word has no schema to carry.
-                         (verify-expr! (:body function) (aggregate-param-locals function)
-                                       signatures 0 nodes facts)
+                         (let [params (aggregate-param-locals function)]
+                           (binding [*record-params*
+                                     (set (keep (fn [[param t]]
+                                                  (when (or (native-scalar-record-type? t)
+                                                            (record-reference? t))
+                                                    param))
+                                                params))]
+                             (verify-expr! (:body function) params
+                                           signatures 0 nodes facts)))
                          (verify-arena-scopes! function)
                          [(:name function) @facts])))
                 functions)
