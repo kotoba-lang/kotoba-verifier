@@ -24,6 +24,8 @@
   ;; The operation-name sets below hold SYMBOLS; the default `set` alias is
   ;; instantiated over keywords. Kotoba-only alias, instantiated over symbols.
   #?(:kotoba (:require [kotoba.lang.coll :as symset :with {elem :symbol}]
+                       [kotoba.lang.coll :as set]
+                       [kotoba.kir.target :as target-profile]
                        [kotoba.gmir :as gmir]
                        [kotoba.form :as form]))
   #?(:kotoba (:schemas {:form/r [:record :form/r [[:tag :i64] [:s :string] [:n :i64] [:k :keyword]
@@ -1938,11 +1940,21 @@
 
     :else (reject! "runtime KIR value type rejected" {:value form})))
 
+;; `(reduce set/union acc sets)` for the Kotoba route: `set/union` is a
+;; function VALUE to `reduce` there, and a fixed-arity typed template
+;; function has no first-class value, so the fold is written as recursion.
+#?(:kotoba
+   (defn- union-all [acc [:set :keyword] sets [:list [:set :keyword]]] [:set :keyword]
+     (if (empty? sets)
+       acc
+       (union-all (set/union acc (first sets)) (rest sets)))))
+
 (defn- infer-effects [direct]
   (loop [inferred (into {} (map (fn [[name facts]] [name (:effects facts)]) direct))]
     (let [next-effects
           (into {} (map (fn [[name {:keys [effects calls]}]]
-                          [name (reduce set/union effects (map #(get inferred % #{}) calls))])
+                          [name #?(:kotoba (union-all effects (map #(get inferred % #{}) calls))
+                                   :default (reduce set/union effects (map #(get inferred % #{}) calls)))])
                         direct))]
       (if (= inferred next-effects) inferred (recur next-effects)))))
 
@@ -2446,7 +2458,9 @@
           declared-capabilities (into {} (map (fn [[n e]] [n (set/difference e pure-ability-effects)]))
                                       declared)
           pure-abilities (into #{} (mapcat #(filter pure-ability-effects %)) (vals declared))
-          total (into (reduce set/union #{} (vals inferred)) pure-abilities)
+          total (into #?(:kotoba (union-all #{} (vals inferred))
+                        :default (reduce set/union #{} (vals inferred)))
+                 pure-abilities)
           cost (bounded-sum (map #(lowered-cost (:body %) {}) functions))]
       (when-not (= inferred declared-capabilities)
         (reject! "runtime KIR function effects rejected" {}))
