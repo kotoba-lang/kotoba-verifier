@@ -29,7 +29,7 @@
                        [kotoba.gmir :as gmir]
                        [kotoba.form :as form]))
   #?(:kotoba (:schemas {:form/r [:record :form/r [[:tag :i64] [:s :string] [:n :i64] [:k :keyword]
-                                                  [:kids [:list [:ref :form/r]]]]]
+                                                  [:kids [:list [:ref :form/r]]] [:span :i64] [:data :bytes]]]
                         :form/rd [:record :form/rd [[:form [:ref :form/r]] [:pos :i64]]]})))
 
 ;; memwidth: the checked-memory surface, four transfer widths by four window
