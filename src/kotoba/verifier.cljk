@@ -209,8 +209,10 @@
   Apply it only after `guest-integer?` has admitted the value; a non-integer
   passes through unchanged so the caller's own type check still decides."
   [value]
+  ;; Kotoba: one integer type (i64), nothing to narrow.
   #?(:clj value
-     :cljs (if (i64/bigint-value? value) (js/Number value) value)))
+     :cljs (if (i64/bigint-value? value) (js/Number value) value)
+     :kotoba value))
 
 (defn- guest=
   "Structural equality between a re-derived value and a sealed one, across the
@@ -755,7 +757,7 @@
          (tree-seq coll? seq (:functions program)))))
 
 (defn- host-index [value]
-  #?(:clj (long value) :cljs (js/Number value)))
+  #?(:clj (long value) :cljs (js/Number value) :kotoba value))
 
 (defn- nominal= [type declared]
   (or (= type declared)
@@ -3279,6 +3281,7 @@
                         ;; `:clj`, ClojureScript/nbb still picks `:cljs` (first match).
                         {:fuel #?(:clj (get-in kexe [:limits :fuel])
                                   :cljs (js/Number (get-in kexe [:limits :fuel]))
+                                  :kotoba (get-in kexe [:limits :fuel])
                                   :default (js/Number (get-in kexe [:limits :fuel])))})
             (catch #?(:clj Exception :cljs :default) error
               ;; adr-2609242100 section 4: a RESOURCE trap in the oracle is
