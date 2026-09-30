@@ -27,6 +27,9 @@
                        [kotoba.lang.coll :as set]
                        [kotoba.kir.target :as target-profile]
                        [kotoba.gmir :as gmir]
+                       [kotoba.artifact.core :as artifact]
+                       [kotoba.kir.compatibility :as compatibility-profile]
+                       [kotoba.kir :as ir]
                        [kotoba.form :as form]))
   #?(:kotoba (:schemas {:form/r [:record :form/r [[:tag :i64] [:s :string] [:n :i64] [:k :keyword]
                                                   [:kids [:list [:ref :form/r]]] [:span :i64] [:data :bytes]]]
