@@ -92,3 +92,10 @@
            (rejection (doc (list 'document-count 'd 'd)))))
     (testing "the operations native refuses by name stay absent"
       (is (some? (rejection (doc (list 'document-sha256 'd))))))))
+
+(deftest a-chained-record-update-of-a-ref-parameter-verifies
+  ;; the inner `record-assoc` denotes the schema it updates even when its operand is
+  ;; only declared `[:ref :t/tree]` (the desugar port updates `:fe/env` twice in a row)
+  (let [twice {:name 'twice :params ['n] :param-types ['[:ref :t/tree]] :result '[:ref :t/tree] :effects #{}
+               :body (list 'record-assoc tree (list 'record-assoc tree 'n :v 1) :v 2)}]
+    (is (nil? (rejection (program :extra [twice]))))))

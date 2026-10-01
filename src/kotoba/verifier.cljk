@@ -1156,6 +1156,14 @@
 ;;
 ;; That last case is what makes a chained projection verifiable without the
 ;; intermediate record ever becoming a value.
+;; True when DECLARED is the record TYPE, or the bare `[:ref :ns/name]` handle type
+;; that names it (a parameter or call result carries only the name; the program has
+;; no schema table here to expand it with). The identity is checked on the name.
+(defn- schema-names? [type declared]
+  (or (= type declared)
+      (and (vector? declared) (= 2 (count declared)) (= :ref (first declared))
+           (vector? type) (= (second declared) (second type)))))
+
 (defn- record-schema-of [form locals]
   (cond
     (and (seq? form) (= 'record-new (first form))) (second form)
@@ -1171,10 +1179,10 @@
     ;; A functional update denotes the schema it updates.
     (and (seq? form) (= 'record-assoc (first form)) (= 5 (count form)))
     (let [[_ type value] form]
-      (when (= type (record-schema-of value locals)) type))
+      (when (schema-names? type (record-schema-of value locals)) type))
     (and (seq? form) (= 'record-get (first form)) (= 4 (count form)))
     (let [[_ type value field] form]
-      (when (= type (record-schema-of value locals))
+      (when (schema-names? type (record-schema-of value locals))
         (let [field-type (second (first (filter #(= field (first %)) (nth type 2))))]
           (when (native-scalar-record-type? field-type) field-type))))
     (and (seq? form) (= 'typed-cap-call (first form)) (= 5 (count form))
@@ -1459,7 +1467,8 @@
                             (and (vector? declared) (= 2 (count declared))
                                  (= :ref (first declared))
                                  (= (second declared) (second type)))))
-            (reject! "runtime KIR record update rejected" {:operation op}))
+            (reject! "runtime KIR record update rejected"
+                     {:operation op :field field :value (when (symbol? value) value) :declared declared}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
           (verify-expr! replacement locals signatures (inc depth) nodes facts))
 
@@ -1621,6 +1630,14 @@
         ;; `kotoba.kir/native-document-operation-arities`; `document-f64`,
         ;; `document-f64-value`, `document-sha256`, `document-print` and
         ;; `document-read` are not in it and stay refused here by absence.
+        ;; `(document-symbol (symbol text))` is the one position where `symbol`
+        ;; reaches native: the symbol is its name's text and the document helper
+        ;; validates the name; the operand verified is the text expression.
+        (and (= op 'document-symbol) (= 1 (count args))
+             (seq? (first args)) (= 'symbol (first (first args)))
+             (= 2 (count (first args))))
+        (verify-expr! (second (first args)) locals signatures (inc depth) nodes facts)
+
         (contains? native-document-operations op)
         (let [arity (get native-document-operations op)]
           (when-not (cond (= :even arity) (even? (count args))

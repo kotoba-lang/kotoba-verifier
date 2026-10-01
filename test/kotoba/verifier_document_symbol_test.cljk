@@ -1,0 +1,25 @@
+(ns kotoba.verifier-document-symbol-test
+  "`(document-symbol (symbol text))` is the one position where `symbol` reaches
+  native; anywhere else the operation is not a native operation and stays refused."
+  (:require [kotoba.test :refer [deftest is]]
+            [kotoba.verifier]))
+
+(defn- program [body]
+  {:format :kotoba.kir/v4 :entry 'main :exports ['main]
+   :signature {:params [] :result :i64} :effects #{}
+   :functions [{:name 'main :params [] :param-types [] :result :i64 :effects #{}
+                :body (list 'let ['d body] 0)}]})
+
+(defn- rejection [program]
+  (try (#'kotoba.verifier/verify-program! program)
+       nil
+       (catch :default e
+         (when-not (= :verify (:phase (ex-data e)))
+           (throw e))
+         (ex-message e))))
+
+(deftest document-symbol-of-a-symbol-verifies
+  (is (nil? (rejection (program (list 'document-symbol (list 'symbol "name")))))))
+
+(deftest a-bare-symbol-operation-is-rejected
+  (is (some? (rejection (program (list 'symbol "name"))))))
