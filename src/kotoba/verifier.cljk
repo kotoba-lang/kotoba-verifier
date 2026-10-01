@@ -505,8 +505,9 @@
    [[:revision :i64] [:target :keyword] [:kind :keyword] [:value :string]]])
 (def ^:private native-ui-event-result-type [:option native-ui-event-type])
 
-(defn- native-provider-contract? [cap-id request-type result-type]
-  (or (and (= 7 cap-id)
+(defn- native-provider-contract? [raw-cap-id request-type result-type]
+  (let [cap-id (guest-index raw-cap-id)]
+   (or (and (= 7 cap-id)
            (= native-clock-request-type request-type)
            (= native-clock-result-type result-type))
       (and (= 24 cap-id)
@@ -517,7 +518,7 @@
            (= native-ui-commit-result-type result-type))
       (and (= 10 cap-id)
            (= native-ui-event-request-type request-type)
-           (= native-ui-event-result-type result-type))))
+           (= native-ui-event-result-type result-type)))))
 ;; `vector-i64` / `vector-f64` (ADR-2608030300). Admitted here as the
 ;; target-independent operations they are, with their KIR arities -- the same
 ;; stance `string-operations` above takes, and for the same reason: a backend
@@ -1335,7 +1336,7 @@
                              (native-provider-contract? cap-id request-type result-type)
                              ;; fs/app-data-bytes (wire 35), re-derived from the
                              ;; same rule in kotoba.kir: two pairs, one wire.
-                             (and (= 35 cap-id)
+                             (and (= 35 (guest-index cap-id))
                                   (contains? #{[:string :bytes] [:bytes :bytes]}
                                              [request-type result-type]))))
             (reject! "runtime KIR typed capability call rejected" {}))

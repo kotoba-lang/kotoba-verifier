@@ -6,7 +6,7 @@
 
 (defn- program [cap request-type result-type request]
   {:format :kotoba.kir/v4 :entry 'main :exports ['main]
-   :signature {:params [] :result :i64} :effects #{[:cap/call 35]}
+   :signature {:params [] :result :i64} :effects #{[:cap/call cap]}
    :functions [{:name 'main :params [] :param-types [] :result :i64 :effects #{[:cap/call cap]}
                 :body (list 'let ['b (list 'typed-cap-call cap request-type result-type request)]
                             (list 'bytes-count 'b))}]})
@@ -27,3 +27,9 @@
   (is (= "runtime KIR typed capability call rejected" (rejection (program 34 :string :bytes "/tmp/a"))))
   (is (= "runtime KIR typed capability call rejected" (rejection (program 35 :bytes :string '(bytes-empty)))))
   (is (= "runtime KIR typed capability call rejected" (rejection (program 35 :i64 :bytes 1)))))
+
+#?(:cljs
+   (deftest an-i64-literal-capability-id-is-compared-as-a-number
+     (is (nil? (rejection (program (js/BigInt 35) :string :bytes "/tmp/a"))))
+     (is (= "runtime KIR typed capability call rejected"
+            (rejection (program (js/BigInt 34) :string :bytes "/tmp/a"))))))
