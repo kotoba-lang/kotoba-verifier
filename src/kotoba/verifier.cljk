@@ -717,6 +717,10 @@
                                 (every? #(native-handle-type? % (inc depth)) (second type)))
                    :option (and (= 2 (count type))
                                 (native-handle-type? (second type) (inc depth)))
+                   ;; amu ADR 0353 floor :native-handles: a vector-arena
+                   ;; handle whose items are one-word handles.
+                   :list (and (= 2 (count type))
+                              (native-handle-type? (second type) (inc depth)))
                    :result (and (= 3 (count type))
                                 (native-handle-type? (second type) (inc depth))
                                 (native-handle-type? (nth type 2) (inc depth)))
@@ -789,6 +793,11 @@
         (let [[type _ field] args]
           (when (handle-of? :record type)
             (some (fn [[name field-type]] (when (= name field) field-type)) (nth type 2))))
+
+        ;; An item of a `[:list T]` is a T (amu ADR 0353 floor :native-handles).
+        (= op 'typed-list-nth)
+        (let [[type] args]
+          (when (handle-of? :list type) (second type)))
 
         (= op 'if)
         (let [then-type (handle-type-of (nth form 2 nil) locals)]
@@ -902,6 +911,12 @@
     (let [[_ _type value item] form]
       (bounded-sum [1 (lowered-cost value env) (lowered-cost item env)]))
     (and (seq? form) (contains? '#{typed-set-count typed-set-nth} (first form)))
+    (let [[_ _type & rest] form]
+      (bounded-sum (cons 1 (map #(lowered-cost % env) rest))))
+    (and (seq? form) (= 'typed-list-new (first form)))
+    (let [[_ _type & items] form]
+      (bounded-sum (cons 1 (map #(lowered-cost % env) items))))
+    (and (seq? form) (= 'typed-list-nth (first form)))
     (let [[_ _type & rest] form]
       (bounded-sum (cons 1 (map #(lowered-cost % env) rest))))
     (and (seq? form)
@@ -1124,6 +1139,13 @@
     (let [[_ type value] form]
       (when (nominal= type (record-schema-of value locals)) type))
     (symbol? form) (get locals form)
+    ;; An item of a `[:list T]` whose T is a record is that record, boxed as
+    ;; one word in the list's arena (amu ADR 0353 floor :native-handles).
+    (and (seq? form) (= 'typed-list-nth (first form)) (= 4 (count form))
+         (handle-of? :list (second form))
+         (vector? (second (second form)))
+         (contains? #{:record :ref} (first (second (second form)))))
+    (second (second form))
     ;; A call whose declared result is a record: the operand arrived boxed.
     (and (seq? form) (simple-symbol? (first form)) (contains? *call-results* (first form)))
     (call-record-schema form)
@@ -1702,6 +1724,26 @@
                          (native-word-value-type? type)
                          (seq rest))
             (reject! "runtime KIR typed-set operation rejected" {:operation op}))
+          (doseq [arg rest]
+            (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        ;; `[:list T]` (amu ADR 0353 floor :native-handles) is the typed set's
+        ;; word arena: new and nth over one-word item handles, re-derived here.
+        (= op 'typed-list-new)
+        (let [[type & items] args]
+          (when-not (handle-of? :list type)
+            (reject! "runtime KIR typed-list constructor rejected" {:operation op}))
+          (when (> (count items) max-vector-literal-items)
+            (reject! "runtime KIR typed-list literal exceeds the item limit"
+                     {:operation op :items (count items)
+                      :limit max-vector-literal-items}))
+          (doseq [item items]
+            (verify-expr! item locals signatures (inc depth) nodes facts)))
+
+        (= op 'typed-list-nth)
+        (let [[type & rest] args]
+          (when-not (and (= 3 (count args)) (handle-of? :list type))
+            (reject! "runtime KIR typed-list nth rejected" {:operation op}))
           (doseq [arg rest]
             (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
