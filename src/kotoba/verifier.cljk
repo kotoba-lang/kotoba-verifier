@@ -286,8 +286,8 @@
        (<= 1 fuel max-native-fuel)))
 
 (def max-functions 16384)
-(def max-expression-nodes 50000)
-(def max-lowered-nodes 100000)
+(def max-expression-nodes 4194304)
+(def max-lowered-nodes 4194304)
 (def ^:private max-depth 256)
 (def ^:private max-bindings 4096)
 (def ^:private max-parameters 64)
@@ -1332,7 +1332,12 @@
                                           [:option-i64 :option-i64]
                                           [:result-i64 :result-i64]}
                                         [request-type result-type])
-                             (native-provider-contract? cap-id request-type result-type)))
+                             (native-provider-contract? cap-id request-type result-type)
+                             ;; fs/app-data-bytes (wire 35), re-derived from the
+                             ;; same rule in kotoba.kir: two pairs, one wire.
+                             (and (= 35 cap-id)
+                                  (contains? #{[:string :bytes] [:bytes :bytes]}
+                                             [request-type result-type]))))
             (reject! "runtime KIR typed capability call rejected" {}))
           (vswap! facts update :effects conj [:cap/call cap-id])
           (verify-expr! request locals signatures (inc depth) nodes facts))
