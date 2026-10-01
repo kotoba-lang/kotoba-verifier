@@ -301,7 +301,9 @@
 ;; every compile and every execution, so it rejected `bit-or` rather than
 ;; admitting something unchecked -- which is exactly why it went unnoticed:
 ;; nothing broke, `bit-or` was simply dead on every native target.
-(def ^:private arithmetic '#{+ - * quot bit-xor bit-and bit-or})
+;; `min`/`max` are the i64 comparisons-and-select kotoba-native lowers
+;; (`normalize-surface-operations`): binary, no NaN or signed zero at this type.
+(def ^:private arithmetic '#{+ - * quot bit-xor bit-and bit-or min max})
 ;; `kotoba.compiler.frontend/i64-operations`, independently re-derived for the
 ;; same reason `arithmetic` is. Held separately because the shift forms carry an
 ;; operand restriction no other arithmetic has: the count must be an integer
@@ -530,8 +532,12 @@
 ;; simplification instead of the contract.
 (def ^:private vector-operations
   '{vector-count 1 vector-get 3 vector-at 2 vector-drop 2
+    ;; `vector-take` is `vector-drop`'s head mirror (how the frontend spells
+    ;; `pop`); kotoba-native lowers it to a bounds-checked `bytes-slice` view.
+    vector-take 2
     vector-assoc 3 vector-conj 2
     vector-f64-count 1 vector-f64-get 3 vector-f64-at 2 vector-f64-drop 2
+    vector-f64-take 2
     vector-f64-assoc 3 vector-f64-conj 2
     ;; `vector-alloc` allocates n zeros; `vector-assoc!` is `vector-assoc`
     ;; with the caller's claim that the handle is dead afterwards, which lets
@@ -603,8 +609,42 @@
 ;; representation at all.
 (def ^:private native-word-field-types #{:i64 :bool :string :keyword :document})
 
+(def ^:private native-document-operations
+  "The `:document` operations native lowers, with their arity: a number, `:any`
+  (a container of any length up to the literal limit), `:even` (a map's
+  key/value pairs) or `:some` (at least one)."
+  '{document-null 0 document-bool 1 document-i64 1 document-string 1
+    document-keyword 1 document-symbol 1
+    document-vector :any document-list :any document-set :any document-map :even
+    document-count 1 document-kind 1 document-equal? 2 document-set-contains? 2
+    document-contains 2 document-get 2 document-vector-at 2 document-list-at 2
+    document-map-entry-at 2 document-vector-assoc 3 document-vector-conj 2
+    document-vector-drop 2 document-vector-remove 2 document-vector-sort 1
+    document-assoc 3 document-dissoc 2 document-merge :some
+    document-string-value 1 document-keyword-value 1 document-symbol-value 1
+    document-bool-value 1 document-i64-value 1
+    document-edn-print 1 document-edn-read 1})
+
 (declare native-scalar-record-type?)
 (declare native-word-value-type?)
+(declare native-handle-type?)
+
+(def ^:private native-member-handle-types
+  "Context-owned handle types an aggregate may hold as a member or list item."
+  #{:bytes :vector-i64})
+
+(defn- native-schema-reference? [type]
+  (and (vector? type) (= 2 (count type)) (= :ref (first type))
+       (keyword? (second type)) (some? (namespace (second type)))))
+
+(defn- native-handle-list-type?
+  "`[:list T]` where T is an aggregate handle (record / variant / option /
+  result / heterogeneous vector / `[:ref q]`). Independently re-derived from
+  `kotoba.kir/native-handle-type?`; docs/selfhost-native-aggregate-lists-design.md
+  in amu-measure."
+  [type]
+  (and (vector? type) (= 2 (count type)) (= :list (first type))
+       (native-handle-type? (second type))))
 
 (defn- native-scalar-record-type?
   ([type] (native-scalar-record-type? type 0))
@@ -623,6 +663,15 @@
                            ;; An `[:option T]`/`[:result T E]` field already
                            ;; travels as ONE word (the pair handle).
                            (native-word-value-type? (second field))
+                           ;; A list of aggregate handles is one vector-arena
+                           ;; handle whose items are words.
+                           (native-handle-list-type? (second field))
+                           ;; A reference to another (or the same) record
+                           ;; schema is that record's one-word handle.
+                           (native-schema-reference? (second field))
+                           ;; A context-owned vector-arena handle is one word
+                           ;; (re-derived from `kotoba.kir`).
+                           (contains? native-member-handle-types (second field))
                            (native-scalar-record-type? (second field) (inc depth)))))
                 (nth type 2))
         (= (count (nth type 2))
@@ -711,6 +760,7 @@
    (and (<= depth max-handle-depth)
         (or (native-word-value-type? type)
             (native-scalar-record-type? type)
+            (contains? native-member-handle-types type)
             (and (vector? type) (seq type)
                  (case (first type)
                    :ref (and (= 2 (count type)) (keyword? (second type))
@@ -723,6 +773,12 @@
                                 (every? #(native-handle-type? % (inc depth)) (second type)))
                    :option (and (= 2 (count type))
                                 (native-handle-type? (second type) (inc depth)))
+                   ;; A list of aggregate handles: the vector arena's items are
+                   ;; words and a handle is one word. Independently re-derived
+                   ;; from `kotoba.kir/native-handle-type?`. A `[:set T]` of
+                   ;; handles stays refused (membership would compare cells).
+                   :list (and (= 2 (count type))
+                              (native-handle-type? (second type) (inc depth)))
                    :result (and (= 3 (count type))
                                 (native-handle-type? (second type) (inc depth))
                                 (native-handle-type? (nth type 2) (inc depth)))
@@ -777,7 +833,7 @@
     (seq? form)
     (let [[op & args] form]
       (cond
-        (contains? '#{record-new variant-new hetero-vector-new hetero-vector-assoc} op)
+        (contains? '#{record-new record-assoc variant-new hetero-vector-new hetero-vector-assoc} op)
         (first args)
 
         (= op 'hetero-vector-at)
@@ -861,6 +917,9 @@
     (and (seq? form) (= 'record-get (first form)))
     (let [[_ _type value _field] form]
       (bounded-sum [1 (lowered-cost value env)]))
+    (and (seq? form) (= 'record-assoc (first form)))
+    (let [[_ _type value _field replacement] form]
+      (bounded-sum [1 (lowered-cost value env) (lowered-cost replacement env)]))
     ;; `variant-new`/`variant-match`'s FIRST argument is likewise a compile-
     ;; time type descriptor, not a KIR expression -- same reasoning as
     ;; `record-new`/`record-get` immediately above (ADR 0063). `variant-
@@ -1075,6 +1134,15 @@
 ;; admitted. The backends never distinguished the two spellings (kotoba-native
 ;; pins that with `a-result-declared-by-schema-reference-boxes-identically`);
 ;; only this resolver did.
+;; An item of a `[:list [:ref q]]` is the one-word handle of a q record, the
+;; same thing a call returning `[:ref q]` yields, so it denotes that reference.
+(defn- list-item-record-schema [form]
+  (when (and (seq? form) (= 'typed-list-nth (first form)) (= 4 (count form)))
+    (let [list-type (second form)]
+      (when (and (vector? list-type) (= 2 (count list-type)) (= :list (first list-type))
+                 (record-reference? (second list-type)))
+        (second list-type)))))
+
 (defn- call-record-schema [form]
   (when (and (seq? form) (simple-symbol? (first form))
              (contains? *call-results* (first form)))
@@ -1099,6 +1167,11 @@
     ;; A call whose declared result is a record: the operand arrived boxed.
     (and (seq? form) (simple-symbol? (first form)) (contains? *call-results* (first form)))
     (call-record-schema form)
+    (list-item-record-schema form) (list-item-record-schema form)
+    ;; A functional update denotes the schema it updates.
+    (and (seq? form) (= 'record-assoc (first form)) (= 5 (count form)))
+    (let [[_ type value] form]
+      (when (= type (record-schema-of value locals)) type))
     (and (seq? form) (= 'record-get (first form)) (= 4 (count form)))
     (let [[_ type value field] form]
       (when (= type (record-schema-of value locals))
@@ -1137,6 +1210,12 @@
 (defn- binding-record-schema [value]
   (or (record-new-schema value)
       (call-record-schema value)
+      (list-item-record-schema value)
+      ;; A functional update is bound as the schema it updates; its operand was
+      ;; already checked against that schema by the `record-assoc` arm.
+      (when (and (seq? value) (= 'record-assoc (first value)) (= 5 (count value))
+                 (native-scalar-record-type? (second value)))
+        (second value))
       (record-sroa-if-schema value)
       (let [result (provider-result-schema value)]
         (when (native-scalar-record-type? result) result))))
@@ -1255,7 +1334,7 @@
           ;; The strictly-binary set, mirroring the frontend's own arity gate.
           ;; `bit-or` belongs here for the same reason its siblings do: `+`/`-`/
           ;; `*` fold over any number of operands, the rest do not.
-          (when (or (empty? args) (and (contains? '#{quot bit-xor bit-and bit-or} op) (not= 2 (count args))))
+          (when (or (empty? args) (and (contains? '#{quot bit-xor bit-and bit-or min max} op) (not= 2 (count args))))
             (reject! "runtime KIR arithmetic arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
@@ -1361,6 +1440,28 @@
                                  (= (second declared) (second type)))))
             (reject! "runtime KIR record projection rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts))
+
+        ;; `record-assoc` is admitted under exactly the conditions `record-get`
+        ;; is (the operand's declared schema is the one being updated), plus a
+        ;; verified replacement. The producer rebuilds the record from reads of
+        ;; the operand, so an operand `record-get` could not read is refused
+        ;; here too.
+        (= op 'record-assoc)
+        (let [[type value field replacement] args
+              declared (or (record-schema-of value locals)
+                           (when *boxed-aggregates?* (handle-type-of value locals)))]
+          (when-not (and (= 4 (count args))
+                        (or (native-scalar-record-type? type)
+                            (and *boxed-aggregates?* (handle-of? :record type)))
+                        (keyword? field)
+                        (some #(= field (first %)) (nth type 2))
+                        (or (= type declared)
+                            (and (vector? declared) (= 2 (count declared))
+                                 (= :ref (first declared))
+                                 (= (second declared) (second type)))))
+            (reject! "runtime KIR record update rejected" {:operation op}))
+          (verify-expr! value locals signatures (inc depth) nodes facts)
+          (verify-expr! replacement locals signatures (inc depth) nodes facts))
 
         ;; ADR 0063, mirroring `record-new` immediately above: the tag must
         ;; be one of the type's own declared cases.
@@ -1513,10 +1614,20 @@
             (reject! "runtime KIR kgraph operation arity rejected" {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
-        (contains? '#{document-edn-read document-edn-print} op)
-        (do
-          (when-not (= 1 (count args))
-            (reject! "runtime KIR document-edn operation arity rejected"
+        ;; The native `:document` family (kotoba-native `kotoba.native.document`,
+        ;; one lowering for both ISAs): a document is the one-word string handle
+        ;; over its canonical EDN text, so each operation is word arguments in,
+        ;; one word out. Independently re-derived from
+        ;; `kotoba.kir/native-document-operation-arities`; `document-f64`,
+        ;; `document-f64-value`, `document-sha256`, `document-print` and
+        ;; `document-read` are not in it and stay refused here by absence.
+        (contains? native-document-operations op)
+        (let [arity (get native-document-operations op)]
+          (when-not (cond (= :even arity) (even? (count args))
+                          (= :any arity) (<= (count args) max-vector-literal-items)
+                          (= :some arity) (pos? (count args))
+                          :else (= arity (count args)))
+            (reject! "runtime KIR document operation arity rejected"
                      {:operation op}))
           (doseq [arg args] (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
@@ -1594,7 +1705,7 @@
         (= op 'typed-list-new)
         (let [[type & items] args]
           (when-not (and (vector? type) (= :list (first type))
-                         (native-word-value-type? type))
+                         (native-handle-type? type))
             (reject! "runtime KIR typed-list constructor rejected" {:operation op}))
           (when (> (count items) max-vector-literal-items)
             (reject! "runtime KIR typed-list literal exceeds the item limit"
@@ -1607,7 +1718,7 @@
         (let [[type value item] args]
           (when-not (and (= 3 (count args))
                          (vector? type) (= :list (first type))
-                         (native-word-value-type? type))
+                         (native-handle-type? type))
             (reject! "runtime KIR typed-list conj rejected" {:operation op}))
           (verify-expr! value locals signatures (inc depth) nodes facts)
           (verify-expr! item locals signatures (inc depth) nodes facts))
@@ -1616,7 +1727,7 @@
         (let [[type & rest] args]
           (when-not (and (= 3 (count args))
                          (vector? type) (= :list (first type))
-                         (native-word-value-type? type))
+                         (native-handle-type? type))
             (reject! "runtime KIR typed-list nth rejected" {:operation op}))
           (doseq [arg rest]
             (verify-expr! arg locals signatures (inc depth) nodes facts)))

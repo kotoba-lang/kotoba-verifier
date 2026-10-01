@@ -22,6 +22,8 @@
             [kotoba.verifier-native-artifact-test]
             [kotoba.verifier-arena-scope-test]
             [kotoba.verifier-recursive-adt-test]
+            ;; lists of aggregate handles, :bytes members, record-assoc, document ops
+            [kotoba.verifier-aggregate-list-test]
             ;; :bytes and the string constructor (context ABI v11)
             [kotoba.verifier-bytes-value-test]
             ;; the loader-less Linux static ELF (adr-2609251400 C2)
@@ -50,5 +52,6 @@
              'kotoba.verifier-native-artifact-test
              'kotoba.verifier-arena-scope-test
              'kotoba.verifier-recursive-adt-test
+             'kotoba.verifier-aggregate-list-test
              'kotoba.verifier-bytes-value-test
              'kotoba.verifier-linux-static-test)

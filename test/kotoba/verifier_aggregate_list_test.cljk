@@ -1,0 +1,94 @@
+(ns kotoba.verifier-aggregate-list-test
+  "Native lists of aggregate handles at the verifier: `[:list [:ref q]]`, a
+  record that holds one (the shape of every Form-based guest), the vector-arena
+  handles `:bytes` / `:vector-i64` as record members, a `record-assoc` update and
+  the `:document` operation family. Each is re-derived here without calling the
+  producer; the refusals are pinned with their literals."
+  (:require [kotoba.test :refer [deftest is testing]]
+            [kotoba.verifier]))
+
+(def ^:private tree
+  '[:record :t/tree [[:v :i64] [:kids [:list [:ref :t/tree]]] [:data :bytes]]])
+(def ^:private kids '[:list [:ref :t/tree]])
+
+(def ^:private leaf-fn
+  {:name 'leaf :params ['v] :param-types [:i64] :result '[:ref :t/tree] :effects #{}
+   :body (list 'record-new tree 'v (list 'typed-list-new kids) (list 'bytes-empty))})
+
+(def ^:private node-fn
+  {:name 'node :params ['v 'a] :param-types [:i64 '[:ref :t/tree]] :result '[:ref :t/tree]
+   :effects #{}
+   :body (list 'record-new tree 'v (list 'typed-list-new kids 'a) (list 'bytes-empty))})
+
+(def ^:private first-kid-fn
+  {:name 'first-kid :params ['n] :param-types ['[:ref :t/tree]] :result :i64 :effects #{}
+   :body (list 'record-get tree (list 'typed-list-nth kids (list 'record-get tree 'n :kids) 0) :v)})
+
+(def ^:private bump-fn
+  {:name 'bump :params ['n] :param-types ['[:ref :t/tree]] :result '[:ref :t/tree] :effects #{}
+   :body (list 'record-assoc tree 'n :v (list '+ 1 (list 'record-get tree 'n :v)))})
+
+(def ^:private main-fn
+  {:name 'main :params [] :param-types [] :result :i64 :effects #{}
+   :body (list 'first-kid (list 'node 1 (list 'bump (list 'leaf 41))))})
+
+(defn- program [& {:keys [extra exports main] :or {exports ['main]}}]
+  {:format :kotoba.kir/v4 :entry 'main :exports exports
+   :signature {:params [] :result :i64} :effects #{}
+   :schemas {:t/tree tree}
+   :functions (into [leaf-fn node-fn first-kid-fn bump-fn (or main main-fn)] extra)})
+
+(defn- rejection [program]
+  (try (#'kotoba.verifier/verify-program! program)
+       nil
+       (catch :default e
+         (when-not (= :verify (:phase (ex-data e)))
+           (throw e))
+         (ex-message e))))
+
+(deftest a-record-holding-a-list-of-its-own-handles-verifies
+  (is (nil? (rejection (program)))))
+
+(deftest a-list-of-handles-may-be-built-grown-and-read
+  (is (nil? (rejection
+             (program :extra [{:name 'grow :params ['xs 'x]
+                               :param-types [kids '[:ref :t/tree]] :result kids :effects #{}
+                               :body (list 'typed-list-conj kids 'xs 'x)}])))))
+
+(deftest a-set-of-handles-stays-refused
+  (testing "membership over a set would compare cells, not values"
+    (is (= "runtime KIR typed-set operation rejected"
+           (rejection
+            (program :extra [{:name 'bag :params ['x] :param-types ['[:ref :t/tree]]
+                              :result :i64 :effects #{}
+                              :body (list 'typed-set-count '[:set [:ref :t/tree]]
+                                          (list 'typed-set-new '[:set [:ref :t/tree]] 'x))}]))))))
+
+(deftest a-list-item-that-is-not-a-word-is-refused
+  (is (some? (rejection
+              (program :extra [{:name 'bad :params [] :param-types [] :result :i64 :effects #{}
+                                :body (list 'vector-count
+                                            (list 'typed-list-new '[:list :f64]))}])))))
+
+(deftest a-record-update-must-name-the-operand-schema-and-a-declared-field
+  (testing "a field the schema does not declare"
+    (is (= "runtime KIR record update rejected"
+           (rejection (program :main (assoc main-fn :body
+                                            (list 'first-kid
+                                                  (list 'record-assoc tree (list 'leaf 1) :nope 2))))))))
+  (testing "an operand whose schema is a different record"
+    (is (= "runtime KIR record update rejected"
+           (rejection
+            (program :extra [{:name 'wrong :params ['n]
+                              :param-types ['[:ref :t/other]] :result '[:ref :t/tree] :effects #{}
+                              :body (list 'record-assoc tree 'n :v 1)}]))))))
+
+(deftest the-document-operations-native-lowers-verify-with-their-arity
+  (let [doc (fn [body] (program :extra [{:name 'doc :params ['d] :param-types [:document]
+                                         :result :i64 :effects #{} :body body}]))]
+    (is (nil? (rejection (doc (list 'document-count 'd)))))
+    (is (nil? (rejection (doc (list 'document-i64-value (list 'document-vector-at 'd 0))))))
+    (is (= "runtime KIR document operation arity rejected"
+           (rejection (doc (list 'document-count 'd 'd)))))
+    (testing "the operations native refuses by name stay absent"
+      (is (some? (rejection (doc (list 'document-sha256 'd))))))))
