@@ -31,7 +31,9 @@
             ;; native :document operations (selfhost foundation gap 2)
             [kotoba.verifier-document-operations-test]
             ;; row operations and a join's projection (amu ADR 0353 :native-record-operations)
-            [kotoba.verifier-record-operations-test]))
+            [kotoba.verifier-record-operations-test]
+            ;; [:map K V] of one-word keys and values (amu ADR 0353 :native-hiccup-node)
+            [kotoba.verifier-typed-map-test]))
 
 (defmethod t/report [:cljs.test/default :end-run-tests] [m]
   (println (str "\nnbb: " (:test m) " tests, " (:pass m) " passed, "
@@ -60,4 +62,5 @@
              'kotoba.verifier-bytes-value-test
              'kotoba.verifier-linux-static-test
              'kotoba.verifier-document-operations-test
-             'kotoba.verifier-record-operations-test)
+             'kotoba.verifier-record-operations-test
+             'kotoba.verifier-typed-map-test)
