@@ -727,10 +727,25 @@
                    ;; handle whose items are one-word handles.
                    :list (and (= 2 (count type))
                               (native-handle-type? (second type) (inc depth)))
+                   ;; amu ADR 0353 floor :native-hiccup-node: the same arena,
+                   ;; keys and values interleaved; a key is a scalar native
+                   ;; code compares by content.
+                   :map (and (= 3 (count type))
+                             (contains? #{:i64 :bool :string :keyword} (second type))
+                             (native-handle-type? (nth type 2) (inc depth)))
                    :result (and (= 3 (count type))
                                 (native-handle-type? (second type) (inc depth))
                                 (native-handle-type? (nth type 2) (inc depth)))
                    false))))))
+
+(def ^:private typed-map-operations
+  "The typed-map heads qualified natively, with their arity (nil: a literal,
+  the type then key/value pairs)."
+  '{typed-map-new nil typed-map-count 2 typed-map-contains 3 typed-map-get 3
+    typed-map-assoc 4 typed-map-dissoc 3})
+
+;; `kotoba.kir.value/typed-map-entry-limit`.
+(def ^:private max-typed-map-entries 31)
 
 (defn- handle-of? [head type]
   (and (vector? type) (= head (first type)) (native-handle-type? type)))
@@ -923,6 +938,9 @@
     (let [[_ _type & items] form]
       (bounded-sum (cons 1 (map #(lowered-cost % env) items))))
     (and (seq? form) (= 'typed-list-nth (first form)))
+    (let [[_ _type & rest] form]
+      (bounded-sum (cons 1 (map #(lowered-cost % env) rest))))
+    (and (seq? form) (contains? typed-map-operations (first form)))
     (let [[_ _type & rest] form]
       (bounded-sum (cons 1 (map #(lowered-cost % env) rest))))
     (and (seq? form)
@@ -1152,6 +1170,18 @@
          (vector? (second (second form)))
          (contains? #{:record :ref} (first (second (second form)))))
     (second (second form))
+    ;; A value read out of a `[:map K V]` whose V is a record, defaulted to
+    ;; that same record, is that record (amu ADR 0353 floor
+    ;; :native-hiccup-node): the map's arena holds it as one word.
+    (and (seq? form) (= 'option-value-of (first form)) (= 4 (count form))
+         (seq? (nth form 2)) (= 'typed-map-get (first (nth form 2)))
+         (handle-of? :map (second (nth form 2)))
+         (vector? (nth (second (nth form 2)) 2))
+         (contains? #{:record :ref} (first (nth (second (nth form 2)) 2)))
+         (let [item (nth (second (nth form 2)) 2)
+               fallback (record-schema-of (nth form 3) locals)]
+           (or (nominal= item fallback) (nominal= fallback item))))
+    (nth (second (nth form 2)) 2)
     ;; A call whose declared result is a record: the operand arrived boxed.
     (and (seq? form) (simple-symbol? (first form)) (contains? *call-results* (first form)))
     (call-record-schema form)
@@ -1759,6 +1789,22 @@
         (let [[type & rest] args]
           (when-not (and (= 3 (count args)) (handle-of? :list type))
             (reject! "runtime KIR typed-list nth rejected" {:operation op}))
+          (doseq [arg rest]
+            (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        ;; `[:map K V]` (amu ADR 0353 floor :native-hiccup-node): the same
+        ;; arena, keys and values interleaved. No `typed-map-equal`, entry-at,
+        ;; keys or vals: equality over a map handle stays refused.
+        (contains? typed-map-operations op)
+        (let [[type & rest] args
+              arity (get typed-map-operations op)]
+          (when-not (and (handle-of? :map type)
+                         (if arity (= arity (count args)) (odd? (count args))))
+            (reject! "runtime KIR typed-map operation rejected" {:operation op}))
+          (when (and (nil? arity) (> (count rest) (* 2 max-typed-map-entries)))
+            (reject! "runtime KIR typed-map literal exceeds the entry limit"
+                     {:operation op :entries (quot (count rest) 2)
+                      :limit max-typed-map-entries}))
           (doseq [arg rest]
             (verify-expr! arg locals signatures (inc depth) nodes facts)))
 
