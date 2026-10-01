@@ -104,7 +104,11 @@
              (list 'record-get one
                    (list 'let ['recv 'm] (list 'record-new one (list 'record-get rec 'recv :a)))
                    :a))))
-  (testing "a let that rebinds the parameter's name no longer names the parameter"
+  ;; amu ADR 0353 floor :native-handles: a let-bound record local forwards
+  ;; too, so a rebinding names the record the let bound -- not the parameter.
+  (testing "a let that rebinds the parameter's name names the record it binds"
+    (is (nil? (param-rejection
+               (list 'let ['m (list 'record-new rec 1 2) 'r 'm] (list 'record-get rec 'r :a)))))
     (is (= "runtime KIR record projection rejected"
            (param-rejection
-            (list 'let ['m (list 'record-new rec 1 2) 'r 'm] (list 'record-get rec 'r :a)))))))
+            (list 'let ['m (list 'record-new other 1 2) 'r 'm] (list 'record-get rec 'r :a)))))))
