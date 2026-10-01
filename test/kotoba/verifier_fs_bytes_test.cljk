@@ -1,0 +1,29 @@
+(ns kotoba.verifier-fs-bytes-test
+  "fs/app-data-bytes (wire 35), re-derived at the verifier: `[:string :bytes]` and
+  `[:bytes :bytes]` on wire 35 verify; another wire or pair is rejected."
+  (:require [kotoba.test :refer [deftest is]]
+            [kotoba.verifier]))
+
+(defn- program [cap request-type result-type request]
+  {:format :kotoba.kir/v4 :entry 'main :exports ['main]
+   :signature {:params [] :result :i64} :effects #{[:cap/call 35]}
+   :functions [{:name 'main :params [] :param-types [] :result :i64 :effects #{[:cap/call cap]}
+                :body (list 'let ['b (list 'typed-cap-call cap request-type result-type request)]
+                            (list 'bytes-count 'b))}]})
+
+(defn- rejection [program]
+  (try (#'kotoba.verifier/verify-program! program)
+       nil
+       (catch :default e
+         (when-not (= :verify (:phase (ex-data e)))
+           (throw e))
+         (ex-message e))))
+
+(deftest a-bytes-read-and-a-bytes-write-verify
+  (is (nil? (rejection (program 35 :string :bytes "/tmp/a"))))
+  (is (nil? (rejection (program 35 :bytes :bytes '(bytes-empty))))))
+
+(deftest other-wires-and-pairs-are-rejected
+  (is (= "runtime KIR typed capability call rejected" (rejection (program 34 :string :bytes "/tmp/a"))))
+  (is (= "runtime KIR typed capability call rejected" (rejection (program 35 :bytes :string '(bytes-empty)))))
+  (is (= "runtime KIR typed capability call rejected" (rejection (program 35 :i64 :bytes 1)))))
