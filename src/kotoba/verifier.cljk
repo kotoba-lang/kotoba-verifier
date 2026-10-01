@@ -1140,8 +1140,12 @@
 (defn- list-item-record-schema [form]
   (when (and (seq? form) (= 'typed-list-nth (first form)) (= 4 (count form)))
     (let [list-type (second form)]
+      ;; A `[:list <record>]` written inline (the compile-cache's OutputEntry list) holds the
+      ;; same one-word record handles a `[:list [:ref q]]` does; the item denotes the record
+      ;; type it was declared with, so a projection of exactly that schema verifies.
       (when (and (vector? list-type) (= 2 (count list-type)) (= :list (first list-type))
-                 (record-reference? (second list-type)))
+                 (or (record-reference? (second list-type))
+                     (native-scalar-record-type? (second list-type))))
         (second list-type)))))
 
 (defn- call-record-schema [form]
