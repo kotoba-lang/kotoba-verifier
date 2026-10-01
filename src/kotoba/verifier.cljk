@@ -285,7 +285,7 @@
   (and (guest-integer? fuel)
        (<= 1 fuel max-native-fuel)))
 
-(def max-functions 1024)
+(def max-functions 16384)
 (def max-expression-nodes 50000)
 (def max-lowered-nodes 100000)
 (def ^:private max-depth 256)
