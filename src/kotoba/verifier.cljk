@@ -242,8 +242,12 @@
              (= a b))))
 
 (def target-contracts
-  {:x86_64-kotoba-v1 {:lowering :runtime-sysv-v1 :emit x86-64/emit-program}
-   :aarch64-kotoba-v1 {:lowering :runtime-aapcs64-v1 :emit aarch64/emit-program}})
+  ;; The Kotoba reading carries the aarch64-macos target only (selfhost: first
+  ;; 100% is one target); it does not load the x86-64 emitter, so an x86-64
+  ;; artifact is refused there by absence. Host readings are unchanged.
+  #?(:kotoba {:aarch64-kotoba-v1 {:lowering :runtime-aapcs64-v1 :emit aarch64/emit-program}}
+     :default {:x86_64-kotoba-v1 {:lowering :runtime-sysv-v1 :emit x86-64/emit-program}
+               :aarch64-kotoba-v1 {:lowering :runtime-aapcs64-v1 :emit aarch64/emit-program}}))
 
 (def ^:private artifact-fields
   #{:format :target :target-profile :value :kir-sha256 :lowering :fuel-abi :context-abi
