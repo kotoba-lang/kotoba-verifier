@@ -611,7 +611,9 @@
    (and (< depth max-record-nesting-depth)
         (vector? type) (= 3 (count type)) (= :record (first type))
         (keyword? (second type)) (some? (namespace (second type)))
-        (vector? (nth type 2)) (seq (nth type 2))
+        ;; No fields is admitted: `{}` passed as an options map, the empty
+        ;; pair chain (amu ADR 0353 floor :options-map-argument).
+        (vector? (nth type 2))
         (<= (count (nth type 2)) max-record-fields)
         (every? (fn [field]
                   (and (vector? field) (= 2 (count field)) (keyword? (first field))
