@@ -626,6 +626,10 @@
                            ;; pair-chain handle a call returns (amu ADR 0353
                            ;; floor :native-handles): `(assoc (mk) :x (mt))`.
                            (record-reference? (second field))
+                           ;; A vector-arena handle is one word too (amu ADR
+                           ;; 0353 floor :native-vector-field). Such a record
+                           ;; stays internal: `native-boundary-type?` refuses it.
+                           (= :vector-i64 (second field))
                            (native-scalar-record-type? (second field) (inc depth)))))
                 (nth type 2))
         (= (count (nth type 2))
@@ -711,6 +715,8 @@
    (and (<= depth max-handle-depth)
         (or (native-word-value-type? type)
             (native-scalar-record-type? type)
+            ;; a vector-arena handle, one word (amu ADR 0353 :native-vector-field)
+            (= :vector-i64 type)
             (and (vector? type) (seq type)
                  (case (first type)
                    :ref (and (= 2 (count type)) (keyword? (second type))
@@ -2268,8 +2274,20 @@
 ;; and the caller checks that first -- nor were `:bool` record fields or
 ;; `[:option :bool]`, which reach admission by recursion rather than through the
 ;; removed guard.
+(defn- holds-private-handle?
+  "True when a record field, at any nesting, is a context-owned vector handle:
+  the kexe loader has no wire form for one inside a record."
+  [type]
+  (and (vector? type) (= :record (first type)) (vector? (nth type 2 nil))
+       (boolean (some (fn [[_ field-type]]
+                        (or (= :vector-i64 field-type)
+                            (holds-private-handle? field-type)))
+                      (nth type 2)))))
+
 (defn- native-boundary-type? [type]
-  (or (contains? native-word-field-types type)
+  (and
+   (not (holds-private-handle? type))
+   (or (contains? native-word-field-types type)
       (contains? native-float-boundary-types type)
       ;; `:bool` reaches admission through the first two clauses --
       ;; `native-word-field-types` and `native-word-value-type?` have both
@@ -2279,7 +2297,7 @@
       (native-scalar-record-type? type)
       (native-scalar-variant-boundary-type? type)
       (and (vector? type) (= 2 (count type)) (= :ref (first type))
-           (keyword? (second type)) (some? (namespace (second type))))))
+           (keyword? (second type)) (some? (namespace (second type)))))))
 
 (defn- native-private-handle-type? [type]
   ;; The native context owns these handles. Machine code can forward one
