@@ -1140,6 +1140,29 @@
 ;; intermediate record ever becoming a value.
 (declare let-locals)
 
+(defn- option-of-record?
+  "An `[:option R]` whose R is a record, inline or by reference, held as one
+  word."
+  [type]
+  (and (vector? type) (= :option (first type)) (= 2 (count type))
+       (native-handle-type? type)
+       (vector? (second type))
+       (contains? #{:record :ref} (first (second type)))))
+
+(defn- option-operand-type
+  "The option type FORM is declared with where it says one -- a local's or a
+  record field's type, or a call's result -- else nil."
+  [form locals]
+  (cond
+    (symbol? form) (let [t (get locals form)] (when (and (vector? t) (= :option (first t))) t))
+    (and (seq? form) (= 'record-get (first form)) (= 4 (count form)))
+    (let [[_ type _ field] form]
+      (when (vector? type)
+        (some (fn [[name field-type]] (when (= name field) field-type)) (nth type 2 nil))))
+    (and (seq? form) (simple-symbol? (first form)) (contains? *call-results* (first form)))
+    (get *call-results* (first form))
+    :else nil))
+
 (defn- record-schema-of [form locals]
   (cond
     (and (seq? form) (= 'record-new (first form))) (second form)
@@ -1188,6 +1211,19 @@
                fallback (record-schema-of (nth form 3) locals)]
            (or (nominal= item fallback) (nominal= fallback item))))
     (nth (second (nth form 2)) 2)
+    ;; The record an `[:option R]` holds, defaulted to that same record, is
+    ;; that record (amu ADR 0353 floor :native-option-record): the option's
+    ;; payload is the record's one-word handle, and `if-let` over an option
+    ;; field or parameter elaborates to exactly this. The option's own type
+    ;; must be the declared one wherever the operand says it.
+    (and (seq? form) (= 'option-value-of (first form)) (= 4 (count form))
+         (option-of-record? (second form))
+         (let [item (second (second form))
+               fallback (record-schema-of (nth form 3) locals)
+               operand (option-operand-type (nth form 2) locals)]
+           (and (or (nominal= item fallback) (nominal= fallback item))
+                (or (nil? operand) (= operand (second form))))))
+    (second (second form))
     ;; A call whose declared result is a record: the operand arrived boxed.
     (and (seq? form) (simple-symbol? (first form)) (contains? *call-results* (first form)))
     (call-record-schema form)
@@ -1234,8 +1270,9 @@
       (record-sroa-if-schema value)
       ;; A let, an if or an update whose value is a record: the row operations'
       ;; elaboration, named by a binding. Resolved in no outer scope, so a
-      ;; bare symbol is still not forwarded.
-      (when (and (seq? value) (contains? '#{let if record-assoc} (first value)))
+      ;; bare symbol is still not forwarded. The record an option holds is
+      ;; its one-word handle (floor :native-option-record).
+      (when (and (seq? value) (contains? '#{let if record-assoc option-value-of} (first value)))
         (let [schema (record-schema-of value {})]
           (when (or (native-scalar-record-type? schema) (record-reference? schema)) schema)))
       (let [result (provider-result-schema value)]
