@@ -1,5 +1,5 @@
 (ns kotoba.verifier
-  {:kotoba/export [*call-results* guest-integer? max-expression-nodes max-functions max-lowered-nodes native-float-boundary-types target-contracts verify-artifact!]}
+  {:kotoba/export [*call-results* *emitters* emitter-admitted? guest-integer? max-expression-nodes max-functions max-lowered-nodes native-float-boundary-types target-contracts verify-artifact!]}
   #?(:clj (:require [kotoba.lang.coll :as set]
                     [kotoba.artifact.core :as artifact]
                     ;; boot-lit: the single decoder for a read-only literal.
@@ -258,6 +258,37 @@
 ;; :inconclusive :trap <budget trap> :fuel <oracle budget>}` and seals no
 ;; value. It is the only optional field, and it is present only then.
 (def ^:private inconclusive-artifact-fields (conj artifact-fields :oracle))
+
+;; ADR 0052 (amu ADR 0365): an artifact whose code was emitted by a backend
+;; other than this file's own `target-contracts` emitter records WHICH one, as
+;; `:emitter {:name :kotoba-seed :sha256 <hex64> :route :bootstrap-process}`.
+;; The field is optional and present only then, so every other artifact keeps
+;; its shape and its seal. It does NOT relax the re-emission check: the code
+;; and the export table are still compared byte for byte with a re-emission,
+;; only the re-emission is made by the RECORDED emitter. This file cannot run
+;; that emitter (it is a separate program, the selfhost seed, reached through
+;; the host's process ability), so the caller hands it in through `*emitters*`:
+;; a map from the recorded `:sha256` to a function KIR program ->
+;; `{:code [...] :exports {...}}`. The caller is responsible for binding a
+;; sha256 only to a function that runs exactly the program with those bytes. A
+;; recorded emitter with no entry is refused by name, never re-emitted by the
+;; built-in emitter and never skipped.
+(def ^:dynamic *emitters* {})
+
+(def ^:private emitter-fields #{:name :sha256 :route})
+
+(defn emitter-admitted?
+  "True for the one admitted shape of an artifact's `:emitter` record."
+  [emitter]
+  (and (map? emitter)
+       (= emitter-fields (set (keys emitter)))
+       (= :kotoba-seed (:name emitter))
+       (= :bootstrap-process (:route emitter))
+       (string? (:sha256 emitter))
+       (some? (re-matches #"[0-9a-f]{64}" (:sha256 emitter)))))
+
+(def ^:private emitted-artifact-fields (conj artifact-fields :emitter))
+(def ^:private emitted-inconclusive-artifact-fields (conj inconclusive-artifact-fields :emitter))
 
 ;; fuel64: 2^20 was never a decision about how much work a native program may
 ;; do. It is what this file has always said, and what
@@ -2993,10 +3024,22 @@
     (some (fn [{:keys [params body]}] (scan (set params) body)) functions)))
 
 (defn- verify-runtime! [{:keys [target program code exports lowering limits fuel-abi context-abi]
-                         profile-value :target-profile}]
+                         profile-value :target-profile :as kexe}]
   (let [backend (target-profile/backend target)
         expected-profile (target-profile/profile target)
-        {expected-lowering :lowering emit :emit} (get target-contracts backend)]
+        {expected-lowering :lowering built-in-emit :emit} (get target-contracts backend)
+        ;; ADR 0052: re-emit with the RECORDED emitter when the artifact names
+        ;; one (aarch64 only: the seed has no other ISA), else the built-in.
+        recorded (:emitter kexe)
+        emit (cond
+               (nil? recorded) built-in-emit
+               (not= :aarch64-kotoba-v1 backend)
+               (reject! "recorded emitter does not serve this target"
+                        {:target target :emitter recorded})
+               :else
+               (or (get *emitters* (:sha256 recorded))
+                   (reject! "recorded emitter is not available to this verifier"
+                            {:target target :emitter recorded})))]
     ;; boot: `:x86_64-aiueos-uefi-v1` joins the two kernel targets. A UEFI
     ;; application runs at CPL0 on an identity-mapped machine with boot
     ;; services live -- the same execution surface the kernel targets name,
@@ -3319,9 +3362,12 @@
                  {:target target :context-abi context-abi})))))
 
 (defn verify-artifact! [{:keys [format target target-profile code effects kir-sha256 compatibility] :as kexe}]
-  (when-not (and (map? kexe) (contains? #{artifact-fields inconclusive-artifact-fields}
+  (when-not (and (map? kexe) (contains? #{artifact-fields inconclusive-artifact-fields
+                                           emitted-artifact-fields emitted-inconclusive-artifact-fields}
                                          (set (keys kexe))))
     (reject! "native artifact schema rejected" {}))
+  (when (and (contains? kexe :emitter) (not (emitter-admitted? (:emitter kexe))))
+    (reject! "native artifact emitter record rejected" {:emitter (:emitter kexe)}))
   (when (contains? kexe :oracle)
     (let [{:keys [status trap fuel] :as oracle} (:oracle kexe)]
       (when-not (and (map? oracle) (= #{:status :trap :fuel} (set (keys oracle)))

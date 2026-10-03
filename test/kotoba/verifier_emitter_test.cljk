@@ -1,0 +1,95 @@
+(ns kotoba.verifier-emitter-test
+  "ADR 0052 (amu ADR 0365): an artifact that records the emitter of its code
+  (`:emitter {:name :kotoba-seed :sha256 .. :route :bootstrap-process}`) is
+  re-emitted by THAT emitter, which the caller supplies through
+  `verifier/*emitters*`. The check stays a byte-for-byte comparison.
+
+  The stand-in emitter here is the built-in aarch64 emitter bound under a
+  made-up sha256, so a correct binding re-emits exactly the fixture's code.
+  What is measured is the routing: no binding -> refused by name, a binding
+  that emits other bytes -> refused as the instruction stream, a malformed
+  record -> refused before any re-emission, and an artifact without the field
+  verifies exactly as before."
+  (:require [kotoba.test :as t :refer [deftest is testing]]
+            [kotoba.lang.edn :as edn]
+            [kotoba.artifact.core :as artifact]
+            [kotoba.native.aarch64 :as aarch64]
+            [kotoba.verifier :as verifier]
+            #?(:clj [kotoba.io :as io])
+            #?(:cljs ["node:fs" :as fs])
+            #?(:cljs ["node:path" :as path])))
+
+(defn- guest-numbers [artifact]
+  ;; The compiler host's reader makes every integer a bigint (see
+  ;; verifier_native_artifact_test.cljk, guest-numbers).
+  #?(:clj artifact
+     :cljs (letfn [(walk [v]
+                     (cond
+                       (and (number? v) (js/Number.isInteger v)) (js/BigInt v)
+                       (map? v) (into (empty v) (map (fn [[k x]] [k (walk x)])) v)
+                       (vector? v) (mapv walk v)
+                       (set? v) (into #{} (map walk) v)
+                       :else v))]
+             (walk artifact))))
+
+(defn- fixture []
+  (guest-numbers
+   (edn/read-string
+    #?(:clj (slurp (io/resource "fixtures/aarch64-demo.kexe"))
+       :cljs (fs/readFileSync (path/join "resources" "fixtures" "aarch64-demo.kexe") "utf8")))))
+
+(def ^:private seed-sha (apply str (repeat 64 "a")))
+
+(def ^:private record {:name :kotoba-seed :sha256 seed-sha :route :bootstrap-process})
+
+(defn- with-emitter [artifact emitter]
+  (artifact/seal (assoc (dissoc artifact :sha256) :emitter emitter)))
+
+(defn- outcome [artifact emitters]
+  (try (binding [verifier/*emitters* emitters]
+         {:decision :admitted :value (verifier/verify-artifact! artifact)})
+       (catch #?(:clj Throwable :cljs :default) e
+         (if-let [phase (:phase (ex-data e))]
+           {:decision :refused :phase phase :message (ex-message e)}
+           {:decision :host-error :message (ex-message e)}))))
+
+(deftest the-fixture-still-verifies-without-the-field
+  (is (= :admitted (:decision (outcome (fixture) {})))))
+
+(deftest a-recorded-emitter-with-no-binding-is-refused-by-name
+  (is (= "recorded emitter is not available to this verifier"
+         (:message (outcome (with-emitter (fixture) record) {})))))
+
+(deftest a-recorded-emitter-re-emits-with-the-bound-function
+  (testing "a binding that emits the same bytes admits the artifact"
+    (is (= :admitted
+           (:decision (outcome (with-emitter (fixture) record)
+                               {seed-sha aarch64/emit-program})))))
+  (testing "a binding for a DIFFERENT sha256 does not serve the record"
+    (is (= "recorded emitter is not available to this verifier"
+           (:message (outcome (with-emitter (fixture) record)
+                              {(apply str (repeat 64 "b")) aarch64/emit-program}))))))
+
+(deftest the-comparison-is-still-byte-for-byte
+  (is (= "native instruction stream rejected"
+         (:message (outcome (with-emitter (fixture) record)
+                            {seed-sha (fn [program]
+                                        (let [r (aarch64/emit-program program)]
+                                          (update r :code #(assoc (vec %) 0 0))))})))))
+
+(deftest a-malformed-emitter-record-is-refused
+  (doseq [bad [(assoc record :route :in-process)
+               (assoc record :name :machine-ir)
+               (assoc record :sha256 "abc")
+               (assoc record :extra 1)
+               :kotoba-seed]]
+    (is (= "native artifact emitter record rejected"
+           (:message (outcome (with-emitter (fixture) bad) {seed-sha aarch64/emit-program})))
+        (pr-str bad))))
+
+(deftest the-emitter-record-is-sealed
+  (testing "editing the record after sealing breaks the artifact seal"
+    (let [sealed (with-emitter (fixture) record)
+          edited (assoc-in sealed [:emitter :sha256] (apply str (repeat 64 "b")))]
+      (is (= "artifact integrity mismatch"
+             (:message (outcome edited {(apply str (repeat 64 "b")) aarch64/emit-program})))))))
