@@ -602,6 +602,7 @@
 
 (declare native-scalar-record-type?)
 (declare native-word-value-type?)
+(declare native-handle-type?)
 
 (declare record-reference?)
 
@@ -632,6 +633,12 @@
                            ;; 0353 floor :native-vector-field). Such a record
                            ;; stays internal: `native-boundary-type?` refuses it.
                            (= :vector-i64 (second field))
+                           ;; A `[:list T]` of one-word items is the same
+                           ;; arena handle (amu ADR 0353 floor
+                           ;; :record-list-sequence: browser.input's
+                           ;; `:surface/windows`, a list of window records).
+                           (and (vector? (second field)) (= :list (first (second field)))
+                                (native-handle-type? (second field)))
                            (native-scalar-record-type? (second field) (inc depth)))))
                 (nth type 2))
         (= (count (nth type 2))
@@ -1273,8 +1280,11 @@
       ;; A let, an if or an update whose value is a record: the row operations'
       ;; elaboration, named by a binding. Resolved in no outer scope, so a
       ;; bare symbol is still not forwarded. The record an option holds is
-      ;; its one-word handle (floor :native-option-record).
-      (when (and (seq? value) (contains? '#{let if record-assoc option-value-of} (first value)))
+      ;; its one-word handle (floor :native-option-record), and so is an item
+      ;; of a `[:list R]` named by a let -- a search over a list of records
+      ;; binds the item it tests (floor :record-list-sequence).
+      (when (and (seq? value)
+                 (contains? '#{let if record-assoc option-value-of typed-list-nth} (first value)))
         (let [schema (record-schema-of value {})]
           (when (or (native-scalar-record-type? schema) (record-reference? schema)) schema)))
       (let [result (provider-result-schema value)]
