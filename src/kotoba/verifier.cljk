@@ -955,6 +955,9 @@
     (and (seq? form) (= 'typed-list-nth (first form)))
     (let [[_ _type & rest] form]
       (bounded-sum (cons 1 (map #(lowered-cost % env) rest))))
+    (and (seq? form) (= 'typed-list-conj (first form)))
+    (let [[_ _type value item] form]
+      (bounded-sum [1 (lowered-cost value env) (lowered-cost item env)]))
     (and (seq? form) (contains? typed-map-operations (first form)))
     (let [[_ _type & rest] form]
       (bounded-sum (cons 1 (map #(lowered-cost % env) rest))))
@@ -1846,6 +1849,15 @@
             (reject! "runtime KIR typed-list nth rejected" {:operation op}))
           (doseq [arg rest]
             (verify-expr! arg locals signatures (inc depth) nodes facts)))
+
+        ;; The list builder (amu ADR 0353 floor :empty-vector-field): conj onto
+        ;; the arena, as `typed-set-conj` is.
+        (= op 'typed-list-conj)
+        (let [[type value item] args]
+          (when-not (and (= 3 (count args)) (handle-of? :list type))
+            (reject! "runtime KIR typed-list conj rejected" {:operation op}))
+          (verify-expr! value locals signatures (inc depth) nodes facts)
+          (verify-expr! item locals signatures (inc depth) nodes facts))
 
         ;; `[:map K V]` (amu ADR 0353 floor :native-hiccup-node): the same
         ;; arena, keys and values interleaved. No `typed-map-equal`, entry-at,
