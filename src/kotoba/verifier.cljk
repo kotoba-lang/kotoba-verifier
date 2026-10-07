@@ -1322,6 +1322,20 @@
                 (record-reference? type))
         type))))
 
+;; amu ADR 0353 floor :native-rebound-row-update: a let naming an update of
+;; a record this scope already holds -- a record parameter, or a local a let
+;; already typed -- binds that record. `(let [s (update s :n inc)] (update s
+;; :m inc))` elaborates to `(let [t (record-assoc T s ..)] (record-assoc T t
+;; ..))`; `binding-record-schema` resolves its value in no scope, so the
+;; operand `s` was unknown and the second update was refused. Resolved here in
+;; the binding's own scope, with the update's type held to its operand's
+;; (`record-schema-of`'s record-assoc clause), so nothing is coerced.
+(defn- update-forward [value env]
+  (when (and (seq? value) (= 'record-assoc (first value)) (= 5 (count value)))
+    (let [schema (record-schema-of value env)]
+      (when (or (native-scalar-record-type? schema) (record-reference? schema))
+        schema))))
+
 (defn- let-locals
   "The locals a let's BINDINGS put in scope over LOCALS, as `verify-bindings!`
   derives them -- without verifying, which `verify-expr!` does separately."
@@ -1331,6 +1345,7 @@
       (reduce (fn [env [name value]]
                 (assoc env name (or (binding-local value)
                                     (param-forward value env)
+                                    (update-forward value env)
                                     (when *boxed-aggregates?* (handle-type-of value env)))))
               locals (partition 2 bindings)))
     locals))
@@ -1350,6 +1365,7 @@
         (verify-expr! value env signatures (inc depth) nodes facts)
         (recur (next pairs) (assoc env name (or (binding-local value)
                                                  (param-forward value env)
+                                                 (update-forward value env)
                                                  (when *boxed-aggregates?*
                                                    (handle-type-of value env))))))
       env)))

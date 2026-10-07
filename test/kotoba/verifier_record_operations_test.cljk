@@ -112,3 +112,24 @@
     (is (= "runtime KIR record projection rejected"
            (param-rejection
             (list 'let ['m (list 'record-new other 1 2) 'r 'm] (list 'record-get rec 'r :a)))))))
+
+(deftest a-let-naming-an-update-of-a-parameter-binds-that-record
+  ;; amu ADR 0353 floor :native-rebound-row-update: `(let [s (update s :a
+  ;; inc)] (update s :b inc))` on a row parameter, as kotoba-sema elaborates
+  ;; it. The let names an update of the parameter, so it binds the record the
+  ;; update names, and the second update's operand IS that record.
+  (let [first-update (list 'record-assoc rec 'm :a (list '+ (list 'record-get rec 'm :a) 1))
+        second-update (fn [type]
+                        (list 'record-assoc type 't :b (list '+ (list 'record-get type 't :b) 1)))]
+    (is (nil? (param-rejection (list 'record-get rec (list 'let ['t first-update] (second-update rec)) :b))))
+    (is (nil? (param-rejection
+               (list 'let ['t first-update 'u (list 'record-assoc rec 't :a 3)]
+                     (list 'record-get rec 'u :a))))
+        "and an update of that name, named again")
+    (testing "refused: the second update naming another record"
+      (is (= "runtime KIR record update rejected"
+             (param-rejection (list 'let ['t first-update] (second-update other))))))
+    (testing "refused: the first update naming another record than the parameter's"
+      (is (= "runtime KIR record update rejected"
+             (param-rejection
+              (list 'let ['t (list 'record-assoc other 'm :a 1)] (second-update other))))))))
