@@ -24,6 +24,7 @@
 
 (def ^:private m '(document-map :a (document-i64 1)))
 (def ^:private v '(document-vector (document-i64 1)))
+(def ^:private bs '(bytes-from-vector-i64 (vector-new 1 2)))
 
 (deftest the-lowered-document-operations-verify
   (doseq [body ['(document-null) '(document-bool true) '(document-string "s")
@@ -35,9 +36,22 @@
                 (list 'document-vector-drop v 1) (list 'document-vector-sort v)
                 (list 'document-assoc m :b '(document-null)) (list 'document-dissoc m :a)
                 (list 'document-merge m m) '(document-i64-value (document-i64 1))
-                (list 'document-edn-print m)]]
+                (list 'document-edn-print m)
+                ;; :bytes and :link (root ADR-2610092310 S4)
+                (list 'document-bytes bs)
+                (list 'option-value-of [:option :bytes]
+                      (list 'document-bytes-value (list 'document-bytes bs)) '(bytes-empty))
+                (list 'document-link bs)
+                (list 'option-value-of [:option :bytes]
+                      (list 'document-link-value (list 'document-bytes bs)) '(bytes-empty))]]
     (testing (pr-str body)
       (is (nil? (rejection body))))))
+
+(deftest the-bytes-and-link-operations-have-arity-one
+  (doseq [body ['(document-bytes) '(document-link) '(document-bytes-value)
+                (list 'document-link-value '(document-null) '(document-null))]]
+    (testing (pr-str body)
+      (is (= "runtime KIR document operation arity rejected" (rejection body))))))
 
 (deftest a-wrong-arity-is-refused-by-the-arity-check
   (doseq [body ['(document-map :a) '(document-count) '(document-get (document-null))
