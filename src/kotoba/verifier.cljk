@@ -736,8 +736,13 @@
                    :vector (and (= 2 (count type)) (vector? (second type))
                                 (<= 1 (count (second type)) max-handle-members)
                                 (every? #(native-handle-type? % (inc depth)) (second type)))
+                   ;; `[:option :bytes]` (root ADR-2610092310 S4): what
+                   ;; document-bytes-value / document-link-value answer; the
+                   ;; option is a pair over one vector-arena word. Only the
+                   ;; option is widened, not `:bytes` itself.
                    :option (and (= 2 (count type))
-                                (native-handle-type? (second type) (inc depth)))
+                                (or (= :bytes (second type))
+                                    (native-handle-type? (second type) (inc depth))))
                    ;; amu ADR 0353 floor :native-handles: a vector-arena
                    ;; handle whose items are one-word handles.
                    :list (and (= 2 (count type))
@@ -1383,7 +1388,10 @@
     document-vector-drop 2 document-vector-remove 2 document-vector-sort 1
     document-assoc 3 document-dissoc 2 document-merge :some
     document-string-value 1 document-keyword-value 1 document-symbol-value 1
-    document-bool-value 1 document-i64-value 1})
+    document-bool-value 1 document-i64-value 1
+    ;; :bytes and :link (root ADR-2610092310 S4): kotoba-native writes them
+    ;; as the EDN tagged literals `#kotoba/bytes` / `#kotoba/cid` in the text.
+    document-bytes 1 document-bytes-value 1 document-link 1 document-link-value 1})
 
 (defn- verify-expr! [form locals signatures depth nodes facts]
   (when (> (vswap! nodes inc) max-expression-nodes)
