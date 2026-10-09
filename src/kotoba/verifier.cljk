@@ -202,6 +202,23 @@
   #?(:clj value
      :cljs (if (i64/bigint-value? value) (js/Number value) value)))
 
+(defn- host-gas-schedule
+  "The program with its `:gas-schedule` weights as HOST numbers, for
+  re-emission. kotoba-native's charge-gas repeats a debit `weight` times and
+  validates the weights with `integer?`; a weight read back out of an
+  artifact is a bigint on cljs, which `repeat` and `integer?` both refuse.
+  Every admitted weight is a small natural number, so `guest-index`'s
+  narrowing is exact. The sealed program itself is left as it is."
+  [program]
+  (if-let [schedule (:gas-schedule program)]
+    (assoc program :gas-schedule
+           (-> schedule
+               (update :gas-schedule/version guest-index)
+               (update :default guest-index)
+               (update :call guest-index)
+               (update :weights #(into {} (map (fn [[k v]] [k (guest-index v)])) %))))
+    program))
+
 (defn- guest=
   "Structural equality between a re-derived value and a sealed one, across the
   two hosts' number representations. See `guest-normalize`."
@@ -2488,15 +2505,19 @@
    [:keys (fn [p] (contains? #{#{:format :entry :exports :signature :effects :functions}
                                #{:format :entry :exports :signature :effects :functions :schemas}}
                              (disj (set (keys p)) :gas-schedule)))]
+   ;; `guest-integer?`, not `integer?`: a schedule read back out of a sealed
+   ;; artifact carries JavaScript bigints on cljs (measured 2026-10-09: an
+   ;; `amu extract-native` of a gas-metered kexe was refused here as a module
+   ;; shape while the same program, still in memory, had been admitted).
    [:gas-schedule (fn [p] (or (not (contains? p :gas-schedule))
                               (let [s (:gas-schedule p)
-                                    pos-int? (fn [x] (and (integer? x) (pos? x)))]
+                                    pos-int? (fn [x] (and (guest-integer? x) (pos? x)))
+                                    nat-int? (fn [x] (and (guest-integer? x) (not (neg? x))))]
                                 (and (map? s) (keyword? (:gas-schedule/id s))
-                                     (integer? (:gas-schedule/version s))
-                                     (not (neg? (:gas-schedule/version s)))
+                                     (nat-int? (:gas-schedule/version s))
                                      (pos-int? (:default s)) (pos-int? (:call s))
                                      (map? (:weights s))
-                                     (every? (fn [[k v]] (and (symbol? k) (integer? v) (not (neg? v))))
+                                     (every? (fn [[k v]] (and (symbol? k) (nat-int? v)))
                                              (:weights s))))))]
    ;; ABI v8: a schema table travels with the program when the oracle needs
    ;; it to resolve a `[:ref q]` -- a RECURSIVE table (a type that names
@@ -3398,7 +3419,7 @@
       (reject! "native artifact requires runtime KIR v3 or v4"
                {:target target :program-format (:format program)}))
     (verify-program! program)
-    (let [expected (try (emit program)
+    (let [expected (try (emit (host-gas-schedule program))
                         (catch #?(:clj Exception :cljs :default) e
                           (reject! "runtime KIR cannot be safely lowered"
                                    {:target target :cause (ex-message e)})))]

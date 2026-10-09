@@ -115,3 +115,20 @@
     (is (not= :admitted
               (refusal (native-artifact (assoc unmetered :gas-schedule bad) v12)))
         (pr-str bad))))
+
+#?(:cljs
+   (deftest a-schedule-read-back-as-bigints-is-not-a-shape-error
+     ;; A sealed artifact read back from disk carries every integer as a
+     ;; JavaScript bigint. Its schedule must reach the context-ABI decision,
+     ;; not stop at the module shape (measured 2026-10-09 through
+     ;; `amu extract-native`).
+     (let [big (-> v0
+                   (update :default js/BigInt) (update :call js/BigInt)
+                   (update :gas-schedule/version js/BigInt))]
+       (is (re-find #"execution context ABI is not admitted"
+                    (str (refusal (native-artifact (assoc unmetered :gas-schedule big) {})))))
+       (is (re-find #"module shape"
+                    (str (refusal (native-artifact (assoc unmetered :gas-schedule
+                                                          (assoc big :default (js/BigInt 0)))
+                                                   v12))))
+           "a bigint still has to be positive"))))
