@@ -22,6 +22,8 @@
             [kotoba.verifier-signing-parity-test]
             ;; the first test that verifies a real native artifact on this host
             [kotoba.verifier-native-artifact-test]
+            ;; context ABI v12, consensus gas (superproject adr-2610092340 D12)
+            [kotoba.verifier-gas-test]
             [kotoba.verifier-arena-scope-test]
             [kotoba.verifier-recursive-adt-test]
             ;; :bytes and the string constructor (context ABI v11)
@@ -57,6 +59,7 @@
              'kotoba.verifier-min-max-take-test
              'kotoba.verifier-signing-parity-test
              'kotoba.verifier-native-artifact-test
+             'kotoba.verifier-gas-test
              'kotoba.verifier-arena-scope-test
              'kotoba.verifier-recursive-adt-test
              'kotoba.verifier-bytes-value-test

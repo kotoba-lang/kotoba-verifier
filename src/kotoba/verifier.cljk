@@ -2481,9 +2481,23 @@
 
 (def ^:private module-shape-checks
   [[:map (fn [p] (map? p))]
+   ;; `:gas-schedule` (superproject adr-2610092340 D12) is the one other
+   ;; key a program may carry: present, it is the price table the native
+   ;; code was charged by, and the re-emission below reproduces the debits
+   ;; from it, so a program and its code cannot disagree about it.
    [:keys (fn [p] (contains? #{#{:format :entry :exports :signature :effects :functions}
                                #{:format :entry :exports :signature :effects :functions :schemas}}
-                             (set (keys p))))]
+                             (disj (set (keys p)) :gas-schedule)))]
+   [:gas-schedule (fn [p] (or (not (contains? p :gas-schedule))
+                              (let [s (:gas-schedule p)
+                                    pos-int? (fn [x] (and (integer? x) (pos? x)))]
+                                (and (map? s) (keyword? (:gas-schedule/id s))
+                                     (integer? (:gas-schedule/version s))
+                                     (not (neg? (:gas-schedule/version s)))
+                                     (pos-int? (:default s)) (pos-int? (:call s))
+                                     (map? (:weights s))
+                                     (every? (fn [[k v]] (and (symbol? k) (integer? v) (not (neg? v))))
+                                             (:weights s))))))]
    ;; ABI v8: a schema table travels with the program when the oracle needs
    ;; it to resolve a `[:ref q]` -- a RECURSIVE table (a type that names
    ;; itself cannot be expanded into the signatures that use it), or a
@@ -3475,7 +3489,15 @@
                             ;; many small vectors run out of entries first, one
                             ;; growing vector runs out of elements first.
                             :vector-capacity 4096
-                            :vector-item-capacity 65536}]
+                            :vector-item-capacity 65536}
+          ;; Version 12 (2026-10-09, superproject adr-2610092340 D12): the
+          ;; consensus GAS word at 384. Only a gas-metered program names it
+          ;; -- its code decrements 384 after checking the version is 12, and
+          ;; on a v11 host 384 is host state -- so an unmetered program stays
+          ;; exactly v11 and a metered one must say v12.
+          expected-context (cond-> expected-context
+                             (contains? program :gas-schedule)
+                             (assoc :version 12 :gas-offset 384))]
       (when-not (guest= expected-fuel-abi fuel-abi)
         (reject! "fuel ABI is not admitted" {:target target :fuel-abi fuel-abi}))
       (when-not (guest= expected-limits limits)
