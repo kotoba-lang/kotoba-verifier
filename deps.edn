@@ -119,7 +119,8 @@
         {:git/url "https://github.com/kotoba-lang/kotoba-gmir.git"
          ;; Advanced 2026-09-25, cf39f7c1 -> 47763164 (kotoba-gmir main, ahead 4, forward only):
          ;; the four ABI v11 runtime arities (superproject adr-2609242330).
-         :git/sha "47763164ceec7be14d67fc35ef619f71d383eab9"}
+         ;; Advanced 2026-10-10, 47763164 -> a891d432 (kotoba-gmir main, behind 0): the :fuel-charge and :gas-charge arities kotoba-native lowers to.
+         :git/sha "a891d4328132058d31756935a8a1d51630526fcc"}
         ;; Advanced 2026-09-02 from a2023fed (302 commits behind) now that the
         ;; `pinned-producer-*` blocker above is diagnosed and repaired. A pin
         ;; that cannot advance stops exercising every new operation through
@@ -175,7 +176,8 @@
          ;; forward only): the packager's :process/spawn / :entropy/draw
          ;; handlers and :spawn option, which `verify-image!` re-derives and
          ;; now reports (adr-2609251400 C3, second half).
-         :git/sha "6d5afeda70cca040f4fc4eb34fcd4e7644d8ab3c"}
+         ;; Advanced 2026-10-10, 6d5afeda -> 34c42ec9 (kotoba-native main, behind 0): charge-gas, the gas debit taking its weight, and the :bytes / :link document kinds on native (superproject adr-2610092340 D12, root ADR-2610092310 S4).
+         :git/sha "34c42ec9eac5b46b6a5a62f644832e3b797a50b0"}
         io.github.kotoba-lang/kotoba-wasm
         {:git/url "https://github.com/kotoba-lang/kotoba-wasm.git"
          :git/sha "9f988676859d55d709a95b025d3f5a80b3743826"}

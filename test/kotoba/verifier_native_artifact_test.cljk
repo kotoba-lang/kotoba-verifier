@@ -178,6 +178,10 @@
   ;; with kotoba-sema at the state-ability commit. Its module row is
   ;; #{:state}: `tick`'s specialization performs the pure ability, `main`
   ;; installs the handler. Measured on the loader: main answers 42.
+  ;; Re-emitted 2026-10-10 from its own sealed :program by kotoba-native
+  ;; 34c42ec9 when this repository's pin advanced (the code grew 552 -> 576
+  ;; bytes: constructor fuel charges and the native changes since 6d5afeda),
+  ;; resealed, and run again: `kexe_loader <bin> 24 0 aarch64 -` printed 42.
   (read-fixture "aarch64-state-counter.kexe"))
 
 (deftest a-state-row-is-verified-not-refused-by-name
@@ -222,6 +226,9 @@
   ;;   nested rethrows a string from its inner handler. main catches all of
   ;;   them and answers 432060713 on the reference, restricted ESM, Wasm and
   ;;   the loader on aarch64 and x86_64 (Rosetta).
+  ;; Re-emitted 2026-10-10 from its own sealed :program by kotoba-native
+  ;; 34c42ec9 (2867 -> 3099 bytes), resealed, and run again:
+  ;; `kexe_loader <bin> 1984 0 aarch64 -` printed 432060713.
   (read-fixture "aarch64-abort-chain.kexe"))
 
 (deftest an-abort-row-is-verified-not-refused-by-name
