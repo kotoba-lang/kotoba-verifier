@@ -7,7 +7,12 @@
   rather than the image). Its image was executed on Linux aarch64 when the
   target landed and printed 500500, as the kexe loader does; the test does not
   claim execution, only that the verifier re-derives that image and refuses
-  every other one."
+  every other one.
+
+  Re-emitted 2026-10-10 from its own sealed :program by kotoba-native
+  34c42ec9 when this repository's pin advanced (1728 -> 1796 bytes) and
+  resealed. That image has NOT been run on Linux since: no Linux host was at
+  hand."
   (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.lang.edn :as edn]
             [kotoba.native.linux-static :as linux-static]

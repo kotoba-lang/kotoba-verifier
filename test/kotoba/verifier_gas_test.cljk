@@ -94,12 +94,21 @@
   (try (verifier/verify-artifact! artifact) :admitted
        (catch #?(:clj Exception :cljs :default) e (ex-message e))))
 
-;; The admission of a metered program at v12 -- which needs kotoba-native's
-;; charge-gas to re-emit the debits -- is asserted where the pins meet: amu's
-;; native gas test. What this repository can assert on its own pin is every
-;; refusal that does not depend on the re-emitted bytes.
+;; kotoba-native's charge-gas refuses a schedule it cannot price by -- or a
+;; bigint one -- while EMITTING, so a bad schedule cannot reach this verifier
+;; by being compiled. It can reach it by being written into a sealed program
+;; afterwards, which is what these cases do: build from a good program, then
+;; replace the program's schedule and reseal.
+(defn- with-program-schedule
+  "The artifact with its program's schedule replaced, its program identity
+  (:kir-sha256) recomputed to match, and resealed -- so the refusal under test
+  is the verifier's verdict on the schedule, not an identity mismatch."
+  [artifact schedule]
+  (let [program (assoc (:program artifact) :gas-schedule schedule)]
+    (artifact/seal (assoc artifact :program program :kir-sha256 (artifact/sha256 program)))))
 
-(deftest a-metered-program-that-names-v11-is-refused
+(deftest a-metered-program-is-admitted-at-v12-and-only-there
+  (is (= :admitted (refusal (native-artifact metered v12))))
   (is (re-find #"execution context ABI is not admitted"
                (str (refusal (native-artifact metered {}))))
       "its code would decrement host state at 384 on a v11 loader"))
@@ -109,26 +118,34 @@
   (is (re-find #"execution context ABI is not admitted"
                (str (refusal (native-artifact unmetered v12))))))
 
+(deftest the-schedule-and-the-code-cannot-disagree
+  (testing "code charged by one schedule, program naming another"
+    ;; `+` is a head this program evaluates, so its weight is in the code (the
+    ;; debit's immediate); a :call weight would not be -- the program calls
+    ;; no function -- and that schedule would rightly be admitted.
+    (is (not= :admitted (refusal (with-program-schedule (native-artifact metered v12)
+                                                        (assoc v0 :weights {'+ 5}))))))
+  (testing "a metered program whose code carries no debits"
+    (is (not= :admitted (refusal (with-program-schedule (native-artifact unmetered v12) v0))))))
+
 (deftest a-schedule-the-program-could-not-be-priced-by-is-refused
   (doseq [bad [(assoc v0 :default 0) (assoc v0 :call 0) (dissoc v0 :gas-schedule/id)
                (assoc v0 :weights {'+ -1})]]
-    (is (not= :admitted
-              (refusal (native-artifact (assoc unmetered :gas-schedule bad) v12)))
+    (is (re-find #"module shape"
+                 (str (refusal (with-program-schedule (native-artifact metered v12) bad))))
         (pr-str bad))))
 
 #?(:cljs
    (deftest a-schedule-read-back-as-bigints-is-not-a-shape-error
      ;; A sealed artifact read back from disk carries every integer as a
-     ;; JavaScript bigint. Its schedule must reach the context-ABI decision,
-     ;; not stop at the module shape (measured 2026-10-09 through
-     ;; `amu extract-native`).
+     ;; JavaScript bigint (measured 2026-10-09 through `amu extract-native`).
+     ;; Such a schedule is admitted -- the verifier narrows it for re-emission
+     ;; -- and a bigint 0 default is still a shape refusal.
      (let [big (-> v0
                    (update :default js/BigInt) (update :call js/BigInt)
                    (update :gas-schedule/version js/BigInt))]
-       (is (re-find #"execution context ABI is not admitted"
-                    (str (refusal (native-artifact (assoc unmetered :gas-schedule big) {})))))
+       (is (= :admitted (refusal (with-program-schedule (native-artifact metered v12) big))))
        (is (re-find #"module shape"
-                    (str (refusal (native-artifact (assoc unmetered :gas-schedule
-                                                          (assoc big :default (js/BigInt 0)))
-                                                   v12))))
+                    (str (refusal (with-program-schedule (native-artifact metered v12)
+                                                         (assoc big :default (js/BigInt 0))))))
            "a bigint still has to be positive"))))
