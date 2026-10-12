@@ -52,7 +52,7 @@ the verifier's independently derived record or variant predicates.
 
 ## Depends on
 
-- `kotoba-lang/kotoba-kir`
+- `kotoba-lang/osaho` (formerly `kotoba-kir`)
 - `kotoba-lang/artifact`
 - `kotoba-lang/kotoba-wasm`
 - `kotoba-lang/kotoba-native`
