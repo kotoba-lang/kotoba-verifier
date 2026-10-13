@@ -7,7 +7,7 @@
   :tier :t2
   :role :verifier
   :must-not [:produce-artifacts :be-a-dependency-of-the-producer-it-verifies]
-  :depends-on ["kotoba-lang/kotoba-kir"
+  :depends-on ["kotoba-lang/osaho"
                "kotoba-lang/artifact"
                "kotoba-lang/kotoba-wasm"
                "kotoba-lang/kotoba-native"
