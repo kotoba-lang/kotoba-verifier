@@ -1401,6 +1401,7 @@
     document-vector :any document-list :any document-set :any document-map :even
     document-count 1 document-kind 1 document-equal? 2 document-set-contains? 2
     document-contains 2 document-get 2 document-vector-at 2 document-list-at 2
+    document-set-at 2
     document-map-entry-at 2 document-vector-assoc 3 document-vector-conj 2
     document-vector-drop 2 document-vector-remove 2 document-vector-sort 1
     document-assoc 3 document-dissoc 2 document-merge :some
