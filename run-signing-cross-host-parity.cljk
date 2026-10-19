@@ -2,8 +2,14 @@
   "Strict entry for the Ed25519 cross-host parity gate
   (kotoba.verifier-signing-cross-host-parity-test). Run it on BOTH hosts:
 
-    nbb:  kbb --backend sci --classpath \"src:test:$(kbb -Spath -M:test)\" run-signing-cross-host-parity.cljk
+    nbb:  CP=$(kbb -Spath -M:test); OSAHO=$(printf '%s' "$CP" | tr ':' '\n' | grep '/osaho/' | head -1);
+          REST=$(printf '%s' "$CP" | tr ':' '\n' | grep -v '/osaho/' | paste -sd: -)
+          kbb --backend sci --classpath "src:test:$OSAHO:$REST" run-signing-cross-host-parity.cljk
     JVM:  sh scripts/jvm-cljk-run.sh run-signing-cross-host-parity.cljk
+
+  (The osaho hoist on the nbb line is measured: kotoba.kir otherwise
+  resolves to kotoba-kir's kir.cljc, which lacks max-fuel -- see
+  kotoba.verifier-signing-cross-host-parity-test's sibling-command.)
 
   Each run spawns the other host as the signing worker, so one run already
   covers both directions of key and signature exchange; the two runs together
