@@ -20,6 +20,10 @@
             ;; signing moved from .clj to .cljc on 2026-09-08; this is the
             ;; half that checks the JVM's bytes from the Node side.
             [kotoba.verifier-signing-parity-test]
+            ;; live JVM x nbb exchange (keys + signatures), each run spawns
+            ;; the other host as the worker; SKIPs with reason when the
+            ;; sibling host cannot run
+            [kotoba.verifier-signing-cross-host-parity-test]
             ;; the first test that verifies a real native artifact on this host
             [kotoba.verifier-native-artifact-test]
             ;; context ABI v12, consensus gas (superproject adr-2610092340 D12)
@@ -58,6 +62,7 @@
              'kotoba.verifier-shift-literal-test
              'kotoba.verifier-min-max-take-test
              'kotoba.verifier-signing-parity-test
+             'kotoba.verifier-signing-cross-host-parity-test
              'kotoba.verifier-native-artifact-test
              'kotoba.verifier-gas-test
              'kotoba.verifier-arena-scope-test
